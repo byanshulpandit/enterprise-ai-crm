@@ -4,8 +4,6 @@ server:
 spring:
   application:
     name: crm-platform
-  profiles:
-    active: ${SPRING_PROFILES_ACTIVE:default}
   datasource:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:crm_db}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
     username: ${DB_USERNAME:root}
@@ -29,17 +27,3 @@ spring:
         dialect: org.hibernate.dialect.MySQLDialect
         format_sql: true
     show-sql: false
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      timeout: 2000ms
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info
-  endpoint:
-    health:
-      show-details: always
