@@ -10,16 +10,16 @@
 - **System Name:** Enterprise AI-CRM Platform
 - **Document Title:** Implementation Plan & Development Roadmap Specification
 - **Document Path:** `docs/design/Implementation-Plan.md`
-- **Document Version:** 1.0.0
+- **Document Version:** 1.1.0
 - **SDLC Phase:** Phase 2 — System Design (Implementation Planning)
-- **Document Status:** **APPROVED BASELINE**
-- **Date:** 2026-09-19
+- **Document Status:** **APPROVED BASELINE (M4 SECURITY FROZEN)**
+- **Date:** 2026-09-20
 - **Author:** Senior Enterprise Software Architect & Engineering Lead
 - **Target Audience:** Backend Engineers, QA Engineers, DevOps Engineers, Project Evaluators
 
 ### 1.2 Baseline Authority Chain
 This implementation roadmap translates the approved architecture into sequential, bounded, and testable engineering milestones. It is strictly governed by:
-$$\text{SRS v1.0.1} \longrightarrow \text{System Architecture v1.0.0} \longrightarrow \text{Database Design v1.0.0} \longrightarrow \text{API Design v1.0.0} \longrightarrow \text{Security + Async + AI Design v1.0.0} \longrightarrow \text{Implementation Plan v1.0.0}$$
+$$\text{SRS v1.0.1} \longrightarrow \text{System Architecture v1.0.0} \longrightarrow \text{Database Design v1.0.1} \longrightarrow \text{API Design v1.0.1} \longrightarrow \text{Security + Async + AI Design v1.1.0} \longrightarrow \text{Implementation Plan v1.1.0}$$
 
 ---
 
@@ -404,35 +404,71 @@ Requires `M1` and `M3`.
 `FR-SEC-001`, `FR-SEC-002`, `NFR-SEC-001`, `NFR-SEC-002`.
 
 ### 13.5 Design Documents Used
-`Database-Design.md` §4.1; `API-Design.md` §13, §14.1; `Security-Async-AI.md` §5, §6, §7, §8, §9, §10.
+`Database-Design.md` §6.1; `API-Design.md` §13, §14.1; `Security-Async-AI.md` §6, §7, §8, §9, §10.
 
 ### 13.6 Main Implementation Areas
-- Migration: Create `users` table (`id`, `username`, `password_hash`, `role`, `is_active`, `created_at`, `updated_at`).
-- `User` entity, `UserRepository`, and `UserDetailsService` implementation.
-- Password hashing: Configured via Spring Security `PasswordEncoder` (BCrypt evaluated).
-- JWT Token Service: Token generation, claims encoding (`sub`, `uid`, `role`), cryptographic verification.
-- Security Filter Chain: `JwtAuthenticationFilter` intercepting requests, validating bearer tokens, and populating `SecurityContextHolder`.
-- Method Security: `@EnableMethodSecurity` enabling `@PreAuthorize("hasRole('ADMIN')")`.
-- Authentication & User Controller endpoints:
-  - `POST /api/v1/auth/login` (permitAll)
-  - `POST /api/v1/users` (ADMIN only)
-  - `GET /api/v1/users` (ADMIN only)
-  - `GET /api/v1/users/{id}` (ADMIN only)
-  - `PATCH /api/v1/users/{id}/role` (ADMIN only)
-  - `PATCH /api/v1/users/{id}/deactivate` (ADMIN only)
-  - `PATCH /api/v1/users/{id}/password` (ADMIN only)
-- Security Invariants: User account deactivation immediately bars authentication; administrators cannot deactivate or demote themselves.
+- **Database Schema:** Exactly one new M4 table `users` (`id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY`, `username VARCHAR(50) NOT NULL UNIQUE`, `email VARCHAR(255) NOT NULL UNIQUE`, `password_hash VARCHAR(255) NOT NULL`, `role VARCHAR(20) NOT NULL`, `is_active BOOLEAN NOT NULL DEFAULT TRUE`, `created_at DATETIME(6) NOT NULL`, `updated_at DATETIME(6) NOT NULL`). Check constraint restricts roles to `ROLE_ADMIN` and `ROLE_MARKETER`.
+- **Customer Lifecycle Preservation:** `customers` table is NOT modified by M4; `deleted_at` remains the sole customer lifecycle marker (no `customers.status`).
+- **User Domain Entities:** `User` JPA entity, `UserRepository`, and Spring Security `UserDetailsService`.
+- **Password Security:** BCrypt work factor strength 12. Password policy: minimum 8 characters, maximum 72 characters, maximum 72 UTF-8 bytes. Same rules for user creation and password update. Plaintext passwords are never stored or logged.
+- **JWT Provider & Configuration:**
+  - Mandatory environment variable `JWT_SECRET`; no fallback/default secret; startup fails fast if missing or < 32 UTF-8 bytes (256 bits).
+  - Algorithm: `HS256` (HMAC-SHA256). Issuer: `cs-crm-2026`.
+  - Access token lifetime: exactly 1 hour (3,600,000 ms).
+  - Refresh tokens: NOT implemented in M4.
+  - Claims: `sub` (canonical username), `uid` (user ID), `role` (diagnostic claim), `iss` (`cs-crm-2026`), `iat`, `exp`, `jti`.
+- **Unified Login:** `POST /api/v1/auth/login` (permitAll). Request JSON field named `"username"` accepts either username OR email; backend queries `findByUsernameOrEmail`. Issued JWT `sub` is ALWAYS canonical username.
+- **Filter Chain & Live Authority Source:**
+  - `JwtAuthenticationFilter` intercepting requests with `Authorization: Bearer <token>`.
+  - Performs cryptographic signature, expiration, and issuer validation.
+  - Loads CURRENT `User` record from MySQL; checks `users.is_active` (if false: does not populate `SecurityContextHolder`, rejects with 401 via `AuthenticationEntryPoint`).
+  - Uses CURRENT database role as authoritative `GrantedAuthority` (JWT role claim is diagnostic; DB role wins). Role changes take effect on the next request.
+- **Security Error Separation:**
+  - `AuthenticationEntryPoint` = `401 Unauthorized` (filter-chain unauthenticated, invalid/expired token, inactive account).
+  - `AccessDeniedHandler` = `403 Forbidden` (filter-chain authenticated caller lacking required role).
+  - `GlobalExceptionHandler` = controller/service/validation exceptions.
+- **Method Security & Roles:**
+  - `@EnableMethodSecurity` enforcing role checks.
+  - Roles: Exactly `ROLE_ADMIN` and `ROLE_MARKETER`. Hierarchy: `ROLE_ADMIN > ROLE_MARKETER`. Stored in `users.role` (no `roles` or `user_roles` tables).
+- **Initial Admin Bootstrap:**
+  - Executes ONLY when `userRepository.count() == 0`.
+  - Provisions exactly one configured `ROLE_ADMIN` account.
+  - If `count() > 0`, bootstrap runner does nothing.
+  - If users table is non-empty but contains no active admin, automatic bootstrap does NOT intervene (requires explicit DBA procedure).
+  - No Redis, no distributed locking, transactional execution, no hardcoded credentials, no plaintext password logging.
+- **Admin Self-Protection Invariant:**
+  - Admin cannot demote own role (`PATCH /api/v1/users/{id}/role`).
+  - Admin cannot deactivate own account (`PATCH /api/v1/users/{id}/deactivate`).
+- **Customer Endpoint Authorization:**
+  - `POST /api/v1/customers` -> ADMIN + MARKETER
+  - `GET /api/v1/customers` -> ADMIN + MARKETER
+  - `GET /api/v1/customers/{id}` -> ADMIN + MARKETER
+  - `PATCH /api/v1/customers/{id}` -> ADMIN + MARKETER
+  - `GET /api/v1/customers/count` -> ADMIN + MARKETER
+  - `DELETE /api/v1/customers/{id}` -> ADMIN only
+- **User Management Endpoints (ADMIN only):**
+  - `POST /api/v1/users`
+  - `GET /api/v1/users`
+  - `GET /api/v1/users/{id}`
+  - `PATCH /api/v1/users/{id}/role`
+  - `PATCH /api/v1/users/{id}/deactivate`
+  - `PATCH /api/v1/users/{id}/password` (password updates do not revoke existing JWTs; tokens expire in 1h; immediate termination via deactivation)
 
 ### 13.7 Expected Artifacts
-- Security configuration classes, JWT utility components, User entity/repository/service, Auth/User controllers.
+- Security configuration classes (`SecurityConfig`, filter chain, entry point, access denied handler), JWT provider component, User entity, repository, service, Auth/User controllers, bootstrap runner.
 
 ### 13.8 Testing Scope
-- **Unit Testing:** JWT provider token generation and expiration unit tests; password hashing verification tests.
+- **Existing Test Suite Baseline (Zero Regressions):**
+  - All existing 39 tests must remain passing (`CustomerIntegrationTest` = 21, `CustomerValidationAndExceptionTest` = 15, `PlatformApplicationTests` = 3).
+- **Unit Testing:** JWT provider token generation and expiration unit tests; password hashing verification tests (BCrypt strength 12).
 - **Integration Testing:** MockMvc tests asserting:
-  - Unauthenticated access returns `401 Unauthorized`.
+  - Unauthenticated access to protected endpoints returns `401 Unauthorized`.
   - Marketer accessing Admin-only endpoint returns `403 Forbidden`.
   - Admin successfully accesses protected endpoints.
-  - Deactivated user login returns `401 Unauthorized`.
+  - Deactivated user request returns `401 Unauthorized` immediately.
+  - Role elevation/demotion takes effect on next request via live database authority.
+  - Bootstrap provisioning on empty database provisions single admin; subsequent restart with count > 0 performs no-op.
+  - Admin self-protection prevents self-demotion and self-deactivation.
 - **Manual Verification:** Log in via Postman; capture JWT; invoke protected endpoint with and without token.
 
 ### 13.9 Negative / Edge Cases
@@ -1078,11 +1114,11 @@ The implementation plan acknowledges the following unresolved decisions and defi
 | **`ODD-API-08`** | AST Limits | `[REQUIRES TESTING]`| `M6` | AST depth and node limits externalized in configuration; benchmarked during performance testing in `M11`. |
 | **`ODD-API-09`** | AI Fallback | `[DEFERRED]` | `M10` | Worker implements static template placeholder substitution as default fallback strategy. |
 | **`ODD-API-10`** | Upload Limits | `[REQUIRES TESTING]`| `M7` | Max file size and row counts configured via Spring multipart properties; finalized during load testing in `M11`. |
-| **`ODD-SEC-01`** | Token Lifetime | `[OPEN]` | `M4` | Configured via `application.yml` (`crm.security.jwt.expiration-minutes`). |
-| **`ODD-SEC-03`** | Token Revocation| `[OPEN]` | `M4` | Handled via account active status (`is_active` check); Redis blacklist strictly barred. |
-| **`ODD-SEC-04`** | Password Hash | `[OPEN]` | `M4` | BCrypt configured with injectable work factor (`crm.security.bcrypt-rounds`). |
-| **`ODD-SEC-05`** | Password Policy | `[OPEN]` | `M4` | Regex validation rule externalized via configuration or validator bean. |
-| **`ODD-SEC-08`** | Signing Algorithm| `[OPEN]` | `M4` | Key provider interface abstracts signing mechanism (HMAC vs RSA). |
+| **`ODD-SEC-01`** | Token Lifetime | `[DECIDED / FROZEN]`| `M4` | Exactly 1 hour / 3,600,000 ms. |
+| **`ODD-SEC-03`** | Token Revocation| `[DECIDED / FROZEN]`| `M4` | Handled via live request-time database active status verification (`users.is_active` check); password changes do not revoke tokens (expire in 1h); Redis blacklist strictly barred. |
+| **`ODD-SEC-04`** | Password Hash | `[DECIDED / FROZEN]`| `M4` | BCrypt strength 12; plaintext passwords never logged or stored. |
+| **`ODD-SEC-05`** | Password Policy | `[DECIDED / FROZEN]`| `M4` | Minimum 8 characters, maximum 72 characters, maximum 72 UTF-8 bytes across user creation and password update. |
+| **`ODD-SEC-08`** | Signing Algorithm| `[DECIDED / FROZEN]`| `M4` | HS256 (HMAC-SHA256); mandatory `JWT_SECRET` (>= 32 UTF-8 bytes). |
 | **`ODD-ASYNC-01`**| Stream Naming | `[OPEN]` | `M8` | Stream and consumer group names configured via `application.yml` (`crm.async.stream-key`). |
 | **`ODD-ASYNC-02`**| Enqueue Gap | `[OPEN / DEFERRED]`| `M9` | Candidate B (background reconciliation scanner) evaluated during async hardening. |
 | **`ODD-ASYNC-03`**| Worker Sizing | `[REQUIRES TESTING]`| `M8`, `M9` | Worker thread pool executor parameters externalized; benchmarked in `M11`. |
@@ -1161,15 +1197,22 @@ Phase 2 (System Design) formally closes and Phase 3 (Implementation) completes w
 - [x] **Delivery semantics:** Explicitly at-least-once; persistent statuses strictly `PENDING`, `SENT`, `FAILED` (no persistent `PROCESSING`).
 - [x] **Campaign completion:** Purely conceptual invariant enforced; zero `target_audience_size` column additions.
 - [x] **AI trust perimeter:** Untrusted input; zero direct SQL generated; `ai_segment_audits` schema unexpanded; `campaigns.ai_summary` respected.
-- [x] **Open decisions:** `ODD-API-*`, `DBD-*`, `ODD-SEC-*`, `ODD-ASYNC-*`, `ODD-AI-*` remain open and unclosed.
+- [x] **Open decisions:** `ODD-API-*`, `DBD-*`, `ODD-ASYNC-*`, `ODD-AI-*` remain open and unclosed; `ODD-SEC-*` decisions relevant to M4 (`ODD-SEC-01`, `03`, `04`, `05`, `08`) are formally decided/frozen per the approved M4 Security Baseline.
 - [x] **Implementation files:** Zero code, entities, DTOs, controllers, migrations, or tests created.
 
 ---
 
 ## 32. Document Status
 
-- **Status:** **APPROVED BASELINE**
+- **Status:** **APPROVED BASELINE (M4 SECURITY FROZEN)**
 - **SDLC Phase:** Phase 2 — System Design (Implementation Planning)
 - **Baseline Freeze Notice:** Formally approved by enterprise architecture review. Serves as the authoritative implementation roadmap for Phase 3 engineering milestones (M1–M12).
 
 ---
+
+## 33. Revision History
+
+| Version | Date | Author | Description | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| 1.0.0 | 2026-09-19 | Senior Enterprise Software Architect & Engineering Lead | Initial Implementation Plan Specification baseline. | Approved |
+| 1.1.0 | 2026-09-20 | Senior Enterprise Software Architect & Engineering Lead | Formally froze M4 Security Baseline: Updated Section 13 with exact users schema (including email), mandatory JWT_SECRET (>= 32 bytes), HS256 algorithm, 1h token lifetime, unified login lookup (username OR email in username field, canonical username in sub claim), live database active check and role authority (DB role wins over JWT claim), security error separation (AuthenticationEntryPoint = 401, AccessDeniedHandler = 403, GlobalExceptionHandler), password constraints (8–72 chars / 72 UTF-8 bytes, BCrypt strength 12), initial admin bootstrap semantics (runs only when userRepository.count() == 0; DBA intervention if non-empty with no admin), admin self-protection, and zero regressions on existing 39 test baseline. Closed ODD-SEC-01, 03, 04, 05, 08 in Section 27. | Approved |

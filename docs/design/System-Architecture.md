@@ -7,10 +7,10 @@
 - **Project Code:** CS-CRM-2026
 - **System Name:** Enterprise AI-CRM Platform
 - **Course / Context:** Advanced Java Programming & Enterprise Systems
-- **Document Version:** 1.0.0
-- **Status:** Baseline Architectural Specification
+- **Document Version:** 1.0.1
+- **Status:** Baseline Architectural Specification (M4 Security Reconciled)
 - **Author:** System Architecture & Engineering Team
-- **Date:** 2026-09-18
+- **Date:** 2026-09-20
 - **Primary Source of Truth:** [Software Requirements Specification (docs/SRS.md)](file:///c:/Users/ANSHUL%20GAUTAM/OneDrive/Desktop/CLG-CRM/docs/SRS.md)
 - **Target Audience:** Academic Evaluators, Software Architecture Reviewers, Backend Implementation Engineers, Technical Leads
 
@@ -113,9 +113,14 @@ To preserve governance clarity across reviews and prevent premature architectura
   - Caching is deferred as an unapproved optimization until empirical read bottlenecks demonstrate necessity and proper cache-invalidation schemes are formally approved.
 
 ### AD-07: Security & Authentication Framework
-- **Classification:** `[DECIDED]` *(Detailed parameters deferred)*
-- **Decision:** Stateless **JWT (JSON Web Token)** authentication integrated with **Spring Security 6.x** and role-based access control (RBAC: `ADMIN`, `MARKETER`, `AUDITOR`).
-- **Deferred to Security Design:** Exact token lifetime, cryptographic signature algorithm (HMAC-SHA256 vs RSA/ECDSA), refresh token rotation flow, and distributed revocation mechanism (Redis-based token denylist vs token versioning).
+- **Classification:** `[DECIDED]` *(M4 Security Baseline Frozen)*
+- **Decision:** Stateless **JWT (JSON Web Token)** authentication integrated with **Spring Security 6.x** and role-based access control across exactly two roles: `ROLE_ADMIN` and `ROLE_MARKETER` (`ROLE_ADMIN > ROLE_MARKETER`).
+- **Baseline Security Parameters (Frozen in M4):**
+  - Cryptographic signing: `HS256` (HMAC-SHA256) with mandatory `JWT_SECRET` (fails fast on startup if missing or < 32 UTF-8 bytes).
+  - Access token lifetime: exactly 1 hour (3,600,000 ms).
+  - Refresh tokens: NOT implemented in M4.
+  - Live database authority: On every request, after cryptographic token validation, the filter chain reloads the user from MySQL, checks `users.is_active` (401 via `AuthenticationEntryPoint` if inactive), and assigns current DB role as authoritative `GrantedAuthority` (no Redis denylist).
+  - Initial admin bootstrap: Executes only when `users` table is empty (`count == 0`).
 
 ### AD-08: AI Personalization Windowed Batching Strategy
 - **Classification:** `[RECOMMENDED / REQUIRES TESTING]`
@@ -547,10 +552,11 @@ stateDiagram-v2
 - **Graceful Shutdown:** Configured via Spring Boot lifecycle hooks. In-flight HTTP requests and active worker batches are allowed up to 30 seconds to flush commits and acknowledge Redis streams before container termination.
 
 ### 9.3 Security Baseline Architecture
-- **Stateless RBAC:** Security context evaluated per-request via `JwtAuthenticationFilter`. Role boundaries strictly enforce access:
-  - `ADMIN`: Full system administration, user management, audit log access, system configuration.
-  - `MARKETER`: Customer management, segmentation, campaign creation and dispatch.
-  - `AUDITOR`: Read-only access to audit logs, campaign analytics, and customer records.
+- **Stateless RBAC & Live Authority:** Security context is evaluated per-request via `JwtAuthenticationFilter`. Role boundaries strictly enforce access across exactly two canonical roles:
+  - `ROLE_ADMIN`: Full administrative superset privilege, user provisioning/management, customer soft-deletion, and system-level configuration.
+  - `ROLE_MARKETER`: Customer profile authoring, dynamic segment creation/preview, campaign launch, and reporting.
+  - Role hierarchy: `ROLE_ADMIN > ROLE_MARKETER`.
+  - Live authority invariant: On every request, after cryptographic token validation, the filter chain reloads the user from MySQL, verifies `users.is_active` (immediate 401 via `AuthenticationEntryPoint` if inactive), and assigns the current DB role as authoritative `GrantedAuthority` (DB role wins over diagnostic JWT role claim).
 - **Injection Defenses:**
   - Dynamic SQL Injection: Fully eliminated via mandatory use of JPA Criteria API with typed parameter binding.
   - Cross-Site Scripting (XSS): Enforced via Jackson HTML escaping and response header security (`Content-Security-Policy`, `X-Content-Type-Options: nosniff`).
@@ -598,8 +604,8 @@ stateDiagram-v2
 
 | SRS Open Decision ID | Topic | Architecture Resolution Status | Architectural Specification / Next Step |
 | :--- | :--- | :--- | :--- |
-| **OD-AUTH-001** | JWT Lifetime & Refresh Strategy | `[DEFERRED]` | **Deferred to Security Design.** Target: access token duration, refresh token rotation strategy. |
-| **OD-AUTH-002** | Token Revocation Mechanism | `[DEFERRED]` | **Deferred to Security Design.** Target: Redis denylist vs User token-version counter in MySQL. |
+| **OD-AUTH-001** | JWT Lifetime & Refresh Strategy | `[RESOLVED / FROZEN]` | **Resolved in M4 Security Baseline:** HS256 signing, 1-hour access token lifetime, refresh tokens omitted in M4. |
+| **OD-AUTH-002** | Token Revocation Mechanism | `[RESOLVED / FROZEN]` | **Resolved in M4 Security Baseline:** Live MySQL `users.is_active` check on every request; password changes do not revoke tokens; zero Redis denylist. |
 | **OD-UPLOAD-001** | Maximum Bulk File Size & Row Limit | `[DEFERRED / REQUIRES TESTING]` | File-size and row limits remain deferred; exact operational thresholds must be established through performance and stress testing. |
 | **OD-AI-001** | AI Personalization Batching Strategy | `[RECOMMENDED / REQUIRES TESTING]` | `AD-08` Bounded Accumulator. Batch size and batch window are configurable and will be finalized through performance, cost, token-limit, and reliability testing. |
 | **OD-QUEUE-001** | Queue Technology Selection | `[DECIDED]` | `AD-03` **Redis Streams** selected as transient message queue for CS-CRM-2026. |
@@ -622,3 +628,12 @@ stateDiagram-v2
 3. **Coding Guardrails (Phase 3 Implementation):**
    - Zero hardcoded secrets; all credentials (DB, Redis, AI API keys) must be resolved via Spring Environment and environment variables.
    - Core domain business logic must reside within service classes, not inside controllers or database triggers.
+
+---
+
+## 14. Revision History
+
+| Version | Date | Author | Description | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| 1.0.0 | 2026-09-18 | System Architecture & Engineering Team | Initial System Architecture Document baseline. | Approved |
+| 1.0.1 | 2026-09-20 | System Architecture & Engineering Team | M4 Security Baseline Reconciliation: Removed stale AUDITOR role from AD-07 and Section 9.3; reaffirmed exactly two roles (ROLE_ADMIN > ROLE_MARKETER); documented live database role authority and is_active check; resolved OD-AUTH-001 and OD-AUTH-002 per frozen M4 security decisions. | Approved |

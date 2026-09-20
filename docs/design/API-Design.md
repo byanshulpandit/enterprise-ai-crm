@@ -6,15 +6,15 @@
 ### Document Metadata
 - **Project Code:** CS-CRM-2026
 - **System Name:** Enterprise AI-CRM Platform
-- **Document Version:** 1.0.0
+- **Document Version:** 1.0.1
 - **SDLC Phase:** Phase 2 — System Design (API Design Specification)
-- **Status:** APPROVED BASELINE
+- **Status:** APPROVED BASELINE (M4 SECURITY FROZEN)
 - **Author:** Senior Enterprise Software Architect & API Design Team
-- **Date:** 2026-09-19
+- **Date:** 2026-09-20
 - **Primary Source of Truth:** [Software Requirements Specification (docs/SRS.md)](file:///c:/Users/ANSHUL%20GAUTAM/OneDrive/Desktop/CLG-CRM/docs/SRS.md) v1.0.1
 - **Architectural Reference:** [System Architecture Document (docs/design/System-Architecture.md)](file:///c:/Users/ANSHUL%20GAUTAM/OneDrive/Desktop/CLG-CRM/docs/design/System-Architecture.md) v1.0.0
-- **Database Reference:** [Database Design Document (docs/design/Database-Design.md)](file:///c:/Users/ANSHUL%20GAUTAM/OneDrive/Desktop/CLG-CRM/docs/design/Database-Design.md) v1.0.0
-- **Approved Baseline Chain:** SRS v1.0.1 → System Architecture v1.0.0 → Database Design v1.0.0 → API Design v1.0.0
+- **Database Reference:** [Database Design Document (docs/design/Database-Design.md)](file:///c:/Users/ANSHUL%20GAUTAM/OneDrive/Desktop/CLG-CRM/docs/design/Database-Design.md) v1.0.1
+- **Approved Baseline Chain:** SRS v1.0.1 → System Architecture v1.0.0 → Database Design v1.0.1 → API Design v1.0.1 → Security + Async + AI Design v1.1.0
 - **Target Audience:** Backend Engineers, Frontend/API Consumers, QA Engineers, Security Engineers, Enterprise Architects
 
 ---
@@ -248,9 +248,9 @@ The platform adheres to semantic HTTP status codes reflecting the outcome of eac
 | **`200 OK`** | Standard successful response | Successful `GET`, `PATCH`, or non-resource-creation `POST` (e.g., login, preview, launch initiation). |
 | **`201 Created`** | Resource successfully created | Successful resource creation (`POST /customers`, `/segments`, `/campaigns`, `/users`). Returns `Location` header. |
 | **`204 No Content`** | Operation succeeded; no body | Successful deletion (`DELETE /customers/{id}`, `/segments/{id}`). |
-| **`400 Bad Request`** | Syntactic or semantic client error | Malformed JSON, missing required headers, illegal argument, or invalid query parameters. |
-| **`401 Unauthorized`** | Authentication failure | Missing, expired, or cryptographically invalid JWT bearer token. |
-| **`403 Forbidden`** | Authorization failure | Authenticated caller lacks required role (e.g., Marketer accessing Admin-only endpoint). |
+| **`400 Bad Request`** | Syntactic or semantic client error | Malformed JSON, missing required headers, illegal argument, invalid query parameters, or controller-level validation failures. |
+| **`401 Unauthorized`** | Authentication failure | Missing, expired, or cryptographically invalid JWT bearer token, or account deactivated (`users.is_active == false`). Emitted via Spring Security `AuthenticationEntryPoint`. |
+| **`403 Forbidden`** | Authorization failure | Authenticated caller lacks required role authority (e.g., Marketer accessing Admin-only endpoint). Emitted via Spring Security `AccessDeniedHandler`. |
 | **`404 Not Found`** | Resource does not exist | Targeted ID does not exist, or targeted customer has been soft-deleted (`deleted_at IS NOT NULL`). |
 | **`409 Conflict`** | State conflict / unique violation | Email duplicate violation on customer create/update, or state transition violation (e.g., launching non-DRAFT campaign). |
 | **`415 Unsupported Media Type`** | Invalid Content-Type header | Request payload is not `application/json` or `multipart/form-data`. |
@@ -263,6 +263,12 @@ The platform adheres to semantic HTTP status codes reflecting the outcome of eac
 - **OPEN DESIGN DECISION (`ODD-API-02`):** The exact HTTP status code returned for zero-audience rejection is currently open between:
   - `400 Bad Request`: Treats launching an empty campaign as an illegal client command.
   - `422 Unprocessable Entity`: Treats the campaign as structurally valid but semantically unexecutable due to business data constraints.
+
+### 9.2 Security Error Handling Architecture
+Security error responses follow a strict separation of concerns between servlet filter chain handlers and the controller advice layer:
+1. **`AuthenticationEntryPoint` (`401 Unauthorized`):** Invoked directly by the filter chain for unauthenticated access, invalid/expired tokens, or deactivated accounts.
+2. **`AccessDeniedHandler` (`403 Forbidden`):** Invoked directly by the filter chain for unauthorized role access.
+3. **`GlobalExceptionHandler` (`@RestControllerAdvice`):** Handles application-layer exceptions (`MethodArgumentNotValidException`, domain validation, resource not found).
 
 ---
 
@@ -488,8 +494,13 @@ The system defines exactly **two canonical roles** (`docs/SRS.md` §3.1):
     "password": "Password123!"
   }
   ```
+- **Login Identifier Semantics:**
+  - The request JSON field is named `"username"`.
+  - That field accepts either the user's canonical `username` OR their `email`.
+  - Backend performs unified lookup (`findByUsernameOrEmail`).
+  - The issued JWT `sub` claim is **ALWAYS** the canonical `username`.
 - **Validation Rules:**
-  - `username`: Required, non-blank string.
+  - `username`: Required, non-blank string (accepts canonical username or email).
   - `password`: Required, non-blank string.
 - **Success Response (`200 OK`):**
   ```json
@@ -500,16 +511,22 @@ The system defines exactly **two canonical roles** (`docs/SRS.md` §3.1):
       "tokenType": "Bearer",
       "user": {
         "id": 1,
-        "username": "admin@crm.internal",
+        "username": "admin",
         "role": "ROLE_ADMIN"
       }
     }
   }
   ```
+- **Token Invariants:**
+  - Algorithm: `HS256` (HMAC-SHA256).
+  - Lifetime: Exactly 1 hour (3,600,000 ms).
+  - Issuer: `cs-crm-2026`.
+  - Claims: `sub` (canonical username), `uid` (user ID), `role` (diagnostic claim), `iss`, `iat`, `exp`, `jti`.
+  - Refresh tokens are **NOT** implemented in M4.
 - **Failure Status Codes:**
   - `400 Bad Request`: Missing username or password.
   - `401 Unauthorized`: Invalid credentials or deactivated user account (`is_active == false`).
-- **Security Invariant:** User account status (`is_active`) must be verified during credential authentication.
+- **Security Invariant:** User account status (`is_active`) must be verified during credential authentication and re-verified against MySQL on every subsequent request.
 
 ---
 
@@ -521,14 +538,16 @@ The system defines exactly **two canonical roles** (`docs/SRS.md` §3.1):
 - **Request Body:**
   ```json
   {
-    "username": "marketer.john@crm.internal",
+    "username": "marketer_john",
+    "email": "marketer.john@crm.internal",
     "password": "TemporaryPassword123!",
     "role": "ROLE_MARKETER"
   }
   ```
 - **Validation Rules:**
-  - `username`: Required, valid email format, max 100 characters. Unique in system.
-  - `password`: Required, minimum 8 characters.
+  - `username`: Required, 1–50 characters. Unique in system.
+  - `email`: Required, valid email format, max 255 characters. Unique in system.
+  - `password`: Required, minimum 8 characters, maximum 72 characters, maximum 72 UTF-8 bytes.
   - `role`: Required, enum: `ROLE_ADMIN`, `ROLE_MARKETER`.
 - **Success Response (`201 Created`):**
   ```json
@@ -536,7 +555,7 @@ The system defines exactly **two canonical roles** (`docs/SRS.md` §3.1):
     "success": true,
     "data": {
       "id": 2,
-      "username": "marketer.john@crm.internal",
+      "username": "marketer_john",
       "role": "ROLE_MARKETER",
       "isActive": true,
       "createdAt": "2026-09-19T10:15:30.123456Z"
@@ -546,7 +565,7 @@ The system defines exactly **two canonical roles** (`docs/SRS.md` §3.1):
 - **Failure Status Codes:**
   - `400 Bad Request`: Validation failure.
   - `403 Forbidden`: Caller lacks `ROLE_ADMIN`.
-  - `409 Conflict`: Username/email already registered.
+  - `409 Conflict`: Username or email already registered.
 
 ---
 
@@ -600,7 +619,23 @@ The system defines exactly **two canonical roles** (`docs/SRS.md` §3.1):
 - **SRS Traceability:** System Administration Requirement (`FR-SEC-001`).
 - **Classification:** `[DESIGN DECISION]`
 - **Authentication:** Bearer JWT. Required Role: `ROLE_ADMIN`.
-- **Request Body:** `{"newPassword": "NewSecurePassword123!"}`.
+- **Request Body:**
+  ```json
+  {
+    "password": "NewSecurePassword123!"
+  }
+  ```
+- **Validation Rules:**
+  - `password`: Required, minimum 8 characters, maximum 72 characters, maximum 72 UTF-8 bytes.
+- **Security Invariants:**
+  - Password updates do **NOT** revoke existing JWTs in M4; existing access tokens expire naturally after 1 hour (3,600,000 ms).
+  - Immediate user termination must be executed via account deactivation (`PATCH /api/v1/users/{id}/deactivate`).
+  - Passwords are encrypted using BCrypt (strength 12). Plaintext passwords are never logged or stored.
+- **Success Response (`200 OK`):** Uniform success envelope confirming password update.
+- **Failure Status Codes:**
+  - `400 Bad Request`: Validation failure (length < 8, > 72 chars, > 72 UTF-8 bytes).
+  - `403 Forbidden`: Caller lacks `ROLE_ADMIN`.
+  - `404 Not Found`: User does not exist.
 
 ---
 
@@ -1376,7 +1411,7 @@ The API Design for the **Enterprise AI-CRM Platform (`CS-CRM-2026`)** provides a
 
 | Category | Decision Identifiers & Architectural Summaries |
 | :--- | :--- |
-| **`DECIDED`** | 1. **Base Path & Versioning:** Anchored at `/api/v1/` using URI path versioning.<br>2. **Stateless Security:** Spring Security 6.x with stateless JWT Bearer tokens.<br>3. **Canonical Domains:** Exactly 8 domains (Authentication, Customer, Upload, Segment, Campaign, Delivery, AI, Reporting).<br>4. **Role Taxonomy:** Exactly two roles (`ROLE_ADMIN`, `ROLE_MARKETER`); ADMIN is the superset.<br>5. **Persistence Authority:** MySQL 8.x is the sole persistent store; Redis is strictly transient async transport.<br>6. **Zero-Audience Campaign Launch:** Launch request is rejected; campaign remains in `DRAFT` and does not transition to `RUNNING`.<br>7. **Campaign Lifecycle:** `DRAFT` $\rightarrow$ `RUNNING` $\rightarrow$ `COMPLETED` / `FAILED`. All launches immediate (no scheduling).<br>8. **Campaign Completion Invariant:** Handled authoritatively by MySQL when all obligations are terminal (`SENT` + `FAILED` == targetAudienceSize, `PENDING` == 0).<br>9. **Delivery Semantics:** At-least-once asynchronous processing; `UNIQUE(campaign_id, customer_id)` provides persistent record deduplication (not end-to-end exactly-once external delivery).<br>10. **Delivery State:** `PENDING` is the persistent obligation state. No persistent `PROCESSING` state in MySQL.<br>11. **Customer Soft-Delete:** Enforced via `customers.deleted_at` timestamp; active queries filter `WHERE deleted_at IS NULL`.<br>12. **AI Decoupling:** AI rule generation is isolated from audience evaluation; audience evaluation belongs strictly to preview/execution against MySQL.<br>13. **Bulk Ingestion Support:** Multipart CSV and XLSX support with partial success capability. |
+| **`DECIDED`** | 1. **Base Path & Versioning:** Anchored at `/api/v1/` using URI path versioning.<br>2. **Stateless Security:** Spring Security 6.x with stateless JWT Bearer tokens.<br>3. **Canonical Domains:** Exactly 8 domains (Authentication, Customer, Upload, Segment, Campaign, Delivery, AI, Reporting).<br>4. **Role Taxonomy:** Exactly two roles (`ROLE_ADMIN`, `ROLE_MARKETER`); ADMIN is the superset (`ROLE_ADMIN > ROLE_MARKETER`).<br>5. **Persistence Authority:** MySQL 8.x is the sole persistent store; Redis is strictly transient async transport.<br>6. **Zero-Audience Campaign Launch:** Launch request is rejected; campaign remains in `DRAFT` and does not transition to `RUNNING`.<br>7. **Campaign Lifecycle:** `DRAFT` $\rightarrow$ `RUNNING` $\rightarrow$ `COMPLETED` / `FAILED`. All launches immediate (no scheduling).<br>8. **Campaign Completion Invariant:** Handled authoritatively by MySQL when all obligations are terminal (`SENT` + `FAILED` == targetAudienceSize, `PENDING` == 0).<br>9. **Delivery Semantics:** At-least-once asynchronous processing; `UNIQUE(campaign_id, customer_id)` provides persistent record deduplication (not end-to-end exactly-once external delivery).<br>10. **Delivery State:** `PENDING` is the persistent obligation state. No persistent `PROCESSING` state in MySQL.<br>11. **Customer Soft-Delete:** Enforced via `customers.deleted_at` timestamp; active queries filter `WHERE deleted_at IS NULL`.<br>12. **AI Decoupling:** AI rule generation is isolated from audience evaluation; audience evaluation belongs strictly to preview/execution against MySQL.<br>13. **Bulk Ingestion Support:** Multipart CSV and XLSX support with partial success capability.<br>14. **M4 Security Baseline (Frozen):** JWT algorithm `HS256` with mandatory `JWT_SECRET` (>= 32 bytes); 1h token lifetime; refresh tokens omitted in M4; login endpoint accepts username OR email in `username` field; JWT `sub` is canonical username; live DB active & role authority check on each request; password policy 8–72 characters / 72 UTF-8 bytes with BCrypt strength 12; password changes do not revoke existing JWTs; initial admin bootstrap executes only when `users` table is empty (`count == 0`). |
 | **`RECOMMENDED`** | 1. **Success Envelope:** Uniform `{"success": true, "data": ..., "metadata": ...}` response contract across all domains.<br>2. **Customer Tags:** Normalized child table `customer_tags` (`customer_id`, `tag`) with `UNIQUE(customer_id, tag)`.<br>3. **OpenAPI Tooling:** SpringDoc OpenAPI 2.x, providing OpenAPI 3.x-compatible API documentation for Spring Boot 3.x. |
 | **`OPEN`** | 1. **`ODD-API-01`:** API-Level `Idempotency-Key` header support and storage strategy.<br>2. **`ODD-API-02`:** Zero-audience campaign launch rejection status code (`400 Bad Request` vs `422 Unprocessable Entity`).<br>3. **`ODD-API-03`:** Error response envelope representation (Custom Envelope vs RFC 7807 Problem Details).<br>4. **`ODD-API-04`:** Default and maximum numeric values for collection pagination.<br>5. **`ODD-API-05`:** AI rule generation response envelope (strict AST vs optional `estimatedCount`).<br>6. **`ODD-API-06`:** Campaign deletion semantics (allowed campaign states and persistence behavior remain open).<br>7. **`ODD-API-07`:** Bulk upload error response bounding in HTTP payload. |
 | **`DEFERRED`** | 1. **`ODD-API-09`:** AI personalization fallback mechanics during worker delivery simulation. |
@@ -1384,3 +1419,10 @@ The API Design for the **Enterprise AI-CRM Platform (`CS-CRM-2026`)** provides a
 | **`OUT OF SCOPE`** | 1. **Alternative Persistence:** PostgreSQL, MongoDB, Cassandra, SQLite.<br>2. **Distributed Message Brokers:** Apache Kafka, RabbitMQ.<br>3. **Caching Layer:** Redis cache-aside / entity caching.<br>4. **Resilience Frameworks:** Resilience4j circuit breakers.<br>5. **Generic Audit Table:** Generic `audit_logs` table (DBD-16 confirmed OUT OF SCOPE; operational logging via SLF4J/MDC).<br>6. **Campaign Scheduling:** Timed/cron future campaign execution.<br>7. **End-to-End Exactly-Once Processing:** External channel delivery is simulated at-least-once. |
 
 ---
+
+## 27. Revision History
+
+| Version | Date | Author | Description | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| 1.0.0 | 2026-09-19 | Senior Enterprise Software Architect & API Design Team | Initial API Design Specification baseline. | Approved |
+| 1.0.1 | 2026-09-20 | Senior Enterprise Software Architect & API Design Team | M4 Security Baseline Freeze: Added Section 9.2 delineating AuthenticationEntryPoint (401), AccessDeniedHandler (403), and GlobalExceptionHandler; updated POST /api/v1/auth/login to document username OR email lookup and canonical username sub claim; updated POST /api/v1/users and PATCH /api/v1/users/{id}/password with 8–72 char / 72 UTF-8 byte password policy; recorded non-revocation of JWTs on password update. | Approved |

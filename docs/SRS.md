@@ -7,11 +7,11 @@
 | **Document Title** | Software Requirements Specification         |
 | **Project Name**   | Enterprise AI-CRM Platform                  |
 | **Project Code**   | CS-CRM-2026                                 |
-| **Version**        | 1.0.1                                       |
+| **Version**        | 1.0.2                                       |
 | **Status**         | Approved — Baseline                         |
 | **SDLC Phase**     | Phase 1 — Requirements Analysis             |
 | **Prepared By**    | Engineering Team                            |
-| **Date**           | 2026-09-18                                  |
+| **Date**           | 2026-09-20                                  |
 
 ---
 
@@ -733,7 +733,7 @@ Only ADMIN may create new user accounts. Fields: username, email, initial passwo
 
 **Priority:** P1 - Critical | **Role:** ADMIN, MARKETER
 
-Public (unauthenticated) API endpoint accepting username/email and password. On success: issues JWT access token (and optionally a refresh token). On failure: `401 Unauthorized` with a generic message (do not reveal whether username or password was wrong).
+Public (unauthenticated) API endpoint accepting username/email in request field `"username"` and password. On success: issues JWT access token (refresh tokens are omitted in M4 per the frozen Security Baseline; access token lifetime is 1 hour). On failure: `401 Unauthorized` with a generic message (do not reveal whether username or password was wrong).
 
 ---
 
@@ -743,7 +743,7 @@ Public (unauthenticated) API endpoint accepting username/email and password. On 
 
 All protected endpoints require `Authorization: Bearer <token>`. Requests with missing or expired tokens receive `401 Unauthorized`.
 
-> **[OPEN — JWT token lifetime, refresh token strategy, and revocation mechanism will be defined during Security Design.]**
+> **[RESOLVED & FROZEN in M4 Security Baseline: HS256 algorithm, 1-hour access token lifetime, refresh tokens omitted in M4, live database active & role authority check; zero Redis token denylist.]**
 
 ---
 
@@ -751,15 +751,15 @@ All protected endpoints require `Authorization: Bearer <token>`. Requests with m
 
 **Priority:** P1 - Critical | **Role:** System (Internal)
 
-Access to each endpoint is restricted by role per the Role Capability Matrix (Section 4.4). A MARKETER accessing ADMIN-only endpoints receives `403 Forbidden`. Role is embedded in the JWT payload.
+Access to each endpoint is restricted by role per the Role Capability Matrix (Section 4.4). A MARKETER accessing ADMIN-only endpoints receives `403 Forbidden`. The authoritative role is loaded from MySQL on each request; the role embedded in the JWT payload is diagnostic.
 
 ---
 
 #### FR-SEC-005 — Password Management
 
-**Priority:** P2 - High | **Role:** ADMIN, MARKETER
+**Priority:** P2 - High | **Role:** ADMIN
 
-Authenticated endpoint for users to change their own password. Current password is validated before accepting the new one. Password complexity requirements defined during Security Design.
+Password updates are administered via the ADMIN-only endpoint `PATCH /api/v1/users/{id}/password`. Passwords must satisfy: minimum 8 characters, maximum 72 characters, maximum 72 UTF-8 bytes, hashed with BCrypt strength 12. Password updates do not revoke existing JWTs (they naturally expire after 1 hour).
 
 ---
 
@@ -767,7 +767,7 @@ Authenticated endpoint for users to change their own password. Current password 
 
 **Priority:** P2 - High | **Role:** ADMIN
 
-ADMIN can: list all users (paginated), retrieve user by ID, update user role, deactivate a user account.
+ADMIN can: list all users (paginated), retrieve user by ID, update user role, deactivate a user account, reset user password. Initial admin is provisioned via automatic bootstrap when `userRepository.count() == 0`.
 
 ---
 
@@ -1212,12 +1212,12 @@ The following features are explicitly **excluded** from scope. Any requests to i
 |-------|---------------------------------|--------------------------------------|---------------------------------------------------------------------------------------------------|
 | OD-01 | AI Campaign Personalisation     | System Design                        | Batching strategy, API-call optimisation, and prompt design will be defined during System Design.  |
 | OD-02 | Bulk Upload File Limits         | System Design & Performance Testing  | Maximum file size and row count limits established after performance testing.                      |
-| OD-03 | JWT Token Lifetime & Refresh    | Security Design                      | Token lifetime, refresh token strategy, and revocation mechanism defined during Security Design.   |
+| OD-03 | JWT Token Lifetime & Refresh    | Security Design                      | Resolved & Frozen in M4: 1-hour access token lifetime, refresh tokens omitted in M4, live DB active & role authority check. |
 | OD-04 | Redis Data Structure & Workers  | System Design                        | Specific Redis data structure, worker concurrency, and retry/backoff strategy to be designed.     |
 | OD-05 | Soft Delete vs. Hard Delete     | System Design                        | Customer deletion strategy to be confirmed, considering referential integrity.                     |
 | OD-06 | Minimum Test Coverage Threshold | System Design                        | Specific unit test coverage percentage target to be defined.                                      |
 | OD-07 | Segment Rule Storage Format     | System Design                        | MySQL storage format for rule trees (JSON column vs. normalised tables) to be decided.            |
-| OD-08 | Password Complexity Policy      | Security Design                      | Specific password complexity rules to be defined.                                                 |
+| OD-08 | Password Complexity Policy      | Security Design                      | Resolved & Frozen in M4: Minimum 8 characters, maximum 72 characters, maximum 72 UTF-8 bytes, BCrypt strength 12. |
 | OD-09 | AI Delivery Retry / Dead-Letter | System Design                        | Retry policy and dead-letter handling for the async delivery queue to be specified.               |
 | OD-10 | Performance Thresholds          | System Design & Performance Testing  | Specific NFR-PERF thresholds for bulk upload, segment evaluation, and delivery throughput.        |
 
@@ -1238,7 +1238,8 @@ The following features are explicitly **excluded** from scope. Any requests to i
 |---------|------------|------------------|-----------------------------------------------------------------------------|----------|
 | 1.0.0   | 2026-09-18 | Engineering Team | Initial SRS — Baseline requirements                                         | Approved |
 | 1.0.1   | 2026-09-18 | Engineering Team | Scope-consistency corrections: Multi-Tenancy, Campaign Scheduling, Frontend | Approved |
+| 1.0.2   | 2026-09-20 | Engineering Team | M4 Security Baseline Reconciliation: Resolved OD-03 (1h token lifetime, no refresh tokens) and OD-08 (password policy 8-72 chars / 72 UTF-8 bytes, BCrypt strength 12) per frozen Security Baseline. | Approved |
 
 ---
 
-*End of Software Requirements Specification — CS-CRM-2026 v1.0.1*
+*End of Software Requirements Specification — CS-CRM-2026 v1.0.2*

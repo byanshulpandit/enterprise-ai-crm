@@ -10,16 +10,16 @@
 - **System Name:** Enterprise AI-CRM Platform
 - **Document Title:** Security, Asynchronous Delivery, and AI Architecture Specification
 - **Document Path:** `docs/design/Security-Async-AI.md`
-- **Document Version:** 1.0.0
+- **Document Version:** 1.1.0
 - **SDLC Phase:** Phase 2 — System Design
-- **Document Status:** **APPROVED BASELINE**
-- **Date:** 2026-09-19
+- **Document Status:** **APPROVED BASELINE (M4 SECURITY FROZEN)**
+- **Date:** 2026-09-20
 - **Author:** System Architecture, Enterprise Security, & Async Infrastructure Engineering Team
 - **Target Audience:** Enterprise Architects, Backend Security Engineers, Infrastructure & Data Engineers, Academic Evaluators
 
 ### 1.2 Baseline Authority Chain
 This specification directly derives from and is strictly subordinate to the approved project baselines:
-$$\text{SRS v1.0.1} \longrightarrow \text{System Architecture v1.0.0} \longrightarrow \text{Database Design v1.0.0} \longrightarrow \text{API Design v1.0.0} \longrightarrow \text{Security + Async + AI Design v1.0.0}$$
+$$\text{SRS v1.0.1} \longrightarrow \text{System Architecture v1.0.0} \longrightarrow \text{Database Design v1.0.1} \longrightarrow \text{API Design v1.0.0} \longrightarrow \text{Security + Async + AI Design v1.1.0}$$
 
 ---
 
@@ -132,86 +132,124 @@ Client Application                    Spring Security Filter Chain           Aut
       │                                            │                                              │                                       │
       ├─ POST /api/v1/auth/login ─────────────────>│                                              │                                       │
       │  {username, password}                      ├─ AuthenticationFilter ──────────────────────>│                                       │
-      │                                            │                                              ├─ SELECT by username ─────────────────>│
+      │  (username field = username OR email)      │                                              ├─ SELECT by username OR email ─────────>│
       │                                            │                                              │<─ UserRecord (hash, role, is_active) ─┤
       │                                            │                                              ├─ Verify is_active == true             │
       │                                            │                                              ├─ PasswordEncoder.matches(raw, hash)   │
-      │                                            │<─ AuthenticationResult (Principal, Roles) ───┤                                       │
+      │                                            │                                              │  (BCrypt strength 12)                 │
+      │                                            │<─ AuthenticationResult (Principal, Role) ────┤                                       │
       │                                            ├─ TokenProvider.generateToken(Principal)      │                                       │
+      │                                            │  (sub=canonical username, 1h expiration)     │                                       │
       │<─ 200 OK {token, tokenType, user} ─────────┤                                              │                                       │
       │                                            │                                              │                                       │
       │  Subsequent Request:                       │                                              │                                       │
       ├─ GET /api/v1/customers ───────────────────>│                                              │                                       │
       │  Authorization: Bearer <token>             ├─ JwtAuthenticationFilter                     │                                       │
-      │                                            │  - Verify Signature                          │                                       │
-      │                                            │  - Validate Expiration (exp)                 │                                       │
-      │                                            │  - Extract Principal & GrantedAuthorities    │                                       │
+      │                                            │  - Cryptographic validation (HS256, exp, iss)│                                       │
+      │                                            │  - Load CURRENT User from MySQL ─────────────┼──────────────────────────────────────>│
+      │                                            │  - Check users.is_active == true             │<─ Current User Record ────────────────┤
+      │                                            │    (if inactive -> 401 via AuthEntryPoint)   │                                       │
+      │                                            │  - Authoritative GrantedAuthority = DB role  │                                       │
+      │                                            │    (JWT role is diagnostic; DB role wins)    │                                       │
       │                                            │  - Populate SecurityContextHolder            │                                       │
       │                                            ├─ AuthorizationFilter (verify ROLE_*)         │                                       │
       │                                            ├─ Dispatch to Controller                      │                                       │
 ```
 
-### 6.2 Deactivated Account Invariant
-When an administrator deactivates a user account (`PATCH /api/v1/users/{id}/deactivate`), `users.is_active` is set to `false`. Subsequent login attempts for deactivated credentials **MUST BE REJECTED** with `401 Unauthorized`.
+- **Stateless Authentication:** Stateless JWT authentication; zero server-side HTTP session state.
+- **Login Endpoint:** `POST /api/v1/auth/login` is public (`permitAll()`).
+- **Protected Endpoints:** All non-public endpoints require `Authorization: Bearer <token>`.
+- **Login Lookup:** The request JSON body field is named `"username"`. This field accepts either the user's canonical `username` OR `email`. The backend performs a unified lookup (`findByUsernameOrEmail`). The issued JWT `sub` claim is ALWAYS the canonical `username`.
+
+### 6.2 Deactivated Account Invariant & Request-Time Active Verification
+When an administrator deactivates a user account (`PATCH /api/v1/users/{id}/deactivate`), `users.is_active` is updated to `FALSE` in MySQL.
+- **Immediate Stateless Revocation:** On every subsequent request, after cryptographic token verification, `JwtAuthenticationFilter` reloads the user from MySQL and checks `users.is_active`.
+- **Rejection Flow:** If the user is inactive (`is_active == false`):
+  1. The filter does NOT populate `SecurityContextHolder`.
+  2. The request is immediately rejected with `401 Unauthorized` through `AuthenticationEntryPoint`.
+- **Stateless Invariant:** This mechanism provides immediate access revocation upon deactivation while preserving zero server-side session state and requiring zero Redis blacklists or token revocation infrastructure.
 
 ---
 
 ## 7. JWT Architecture and Lifecycle
 
 ### 7.1 Token Structure and Claims
-Tokens issued by the platform contain standard registered claims and explicit application context:
-- **Header:** Algorithm identifier (`alg`) and Type (`typ: JWT`).
+Tokens issued by the platform contain standard registered claims and private domain context:
+- **Header:** Algorithm identifier (`alg: HS256`) and Type (`typ: JWT`).
 - **Registered Claims:**
-  - `sub` (Subject): Canonical `username` (email) of the user.
+  - `sub` (Subject): Canonical `username` (always the unique username, never email unless identical to username).
+  - `iss` (Issuer): `cs-crm-2026`.
   - `iat` (Issued At): UTC timestamp of issuance.
-  - `exp` (Expiration): UTC timestamp after which the token is invalid.
+  - `exp` (Expiration): UTC timestamp after which the token is invalid (exactly 1 hour / 3,600,000 ms from issuance).
   - `jti` (JWT ID): Unique UUID assigned to the token.
 - **Private Domain Claims:**
   - `uid` (User ID): Internal `BIGINT UNSIGNED` primary key from `users.id`.
-  - `role`: Canonical granted authority (`ROLE_ADMIN` or `ROLE_MARKETER`).
+  - `role`: Role claim (diagnostic only; database role is the authoritative source for `GrantedAuthority`).
+- **Token Lifecycle:**
+  - Access token lifetime: exactly 1 hour / 3,600,000 ms.
+  - Refresh tokens: **NOT** implemented in M4 (`ODD-SEC-02` resolved as out-of-scope for M4).
 
 ### 7.2 Cryptographic Signing Strategy (`ODD-SEC-08`)
-- **Status:** **`[OPEN DESIGN DECISION]`**
-- **Architectural Policy:** JWT bearer authentication is **`[DECIDED]`**. However, the exact cryptographic signing algorithm and key architecture remain open:
-  - *Candidate A (Symmetric):* HMAC algorithms (`HS256`, `HS384`, `HS512`) utilizing a shared server-side secret. Simplifies deployment in a modular monolith.
-  - *Candidate B (Asymmetric):* Public/Private key pairs (`RS256`, `ES256`). Decouples token verification from token issuance.
-- *Constraint:* The algorithm choice must be finalized prior to implementation freeze. Insecure algorithms (`alg: none`) are strictly rejected.
+- **Status:** **`[DECIDED]`** *(Frozen M4 Baseline)*
+- **Algorithm:** `HS256` (HMAC-SHA256).
+- **Secret Management Invariants:**
+  - `JWT_SECRET` is a mandatory environment variable.
+  - No default or fallback secret is permitted in configuration or source code.
+  - Application startup **FAILS FAST** if `JWT_SECRET` is missing or is shorter than 32 UTF-8 bytes (256 bits).
 
 ### 7.3 Token Lifecycle & Storage Governance
 
 | Lifecycle Dimension | Status | Architectural Rule & Constraint |
 | :--- | :--- | :--- |
-| **Access Token Lifetime** | **`[OPEN DESIGN DECISION]` (`ODD-SEC-01`)** | Exact duration (e.g., 15 minutes vs. 1 hour vs. 8 hours) is **NOT** frozen. Must be balanced between token exposure risk and user re-authentication friction. |
-| **Refresh Token Support** | **`[OPEN DESIGN DECISION]` (`ODD-SEC-02`)** | Whether to implement refresh tokens remains open. If adopted, refresh tokens must be managed without compromising server statelessness. |
-| **Token Revocation Strategy** | **`[OPEN DESIGN DECISION]` (`ODD-SEC-03`)** | Pure stateless expiration vs. active user status verification (`users.is_active`) vs. future database-backed revocation. **CRITICAL INVARIANT:** Redis **MUST NOT** be used for JWT blacklisting or revocation state. |
-| **Signing Key Management** | **`[DEFERRED]` (`ODD-SEC-06`)** | Base deployment utilizes environment-injected secrets (`JWT_SECRET`). Automated key rotation and JWKS endpoints are deferred to enterprise ops hardening. |
+| **Access Token Lifetime** | **`[DECIDED]`** *(was `ODD-SEC-01`)* | Exactly **1 hour** (3,600,000 ms). Eliminates open ambiguity. |
+| **Refresh Token Support** | **`[DECIDED / NOT IMPLEMENTED]`** *(was `ODD-SEC-02`)* | Refresh tokens are **NOT implemented in M4**. |
+| **Token Revocation Strategy** | **`[DECIDED]`** *(was `ODD-SEC-03`)* | Handled via request-time database active status verification (`users.is_active` check). Password changes do NOT revoke existing JWTs in M4 (tokens naturally expire within 1 hour). Immediate termination is executed exclusively through account deactivation. Redis is strictly barred from token blacklisting or revocation state. |
+| **Signing Key Management** | **`[DEFERRED]` (`ODD-SEC-06`)** | Base deployment utilizes mandatory environment variable `JWT_SECRET`. Automated key rotation and JWKS endpoints are deferred to enterprise ops hardening. |
 
 ---
 
 ## 8. Password and Credential Security
 
 ### 8.1 Password Hashing Policy (`ODD-SEC-04`)
-- **Status:** **`[OPEN DESIGN DECISION / REQUIRES TESTING]`**
-- **Architectural Policy:** Password hashing is a mandatory security control. **BCrypt** is evaluated and **`[RECOMMENDED]`** as the industry-standard salted hashing mechanism. However, BCrypt is not an immutable baseline mandate; alternatives (e.g., Argon2id) remain permissible if selected prior to implementation.
-- **Work Factor / Cost Parameter:** The computational cost parameter (e.g., BCrypt log rounds 10 vs. 12) is **NOT** frozen. Sizing requires empirical benchmarking on target server hardware to balance brute-force resistance against CPU latency during concurrent login spikes.
+- **Status:** **`[DECIDED]`** *(Frozen M4 Baseline)*
+- **Algorithm:** **BCrypt** with work factor strength **12**.
+- **Invariants:**
+  - Salt is generated per-password by the BCrypt algorithm.
+  - Plaintext passwords are **NEVER** stored, cached, or written to normal application logs.
+  - The same hashing configuration applies across user creation and administrative password resets.
 
 ### 8.2 Password Complexity Policy (`ODD-SEC-05`)
-- **Status:** **`[OPEN DESIGN DECISION]`**
-- **Architectural Policy:** Neither `docs/SRS.md` nor upstream designs freeze a rigid regex password complexity rule. A baseline requirement of minimum 8 characters with mixed character classes is **`[RECOMMENDED]`**, but formal regex constraints remain an open decision.
+- **Status:** **`[DECIDED]`** *(Frozen M4 Baseline)*
+- **Constraints:**
+  - Minimum length: **8 characters**.
+  - Maximum length: **72 characters**.
+  - Maximum UTF-8 bytes: **72 UTF-8 bytes** (strictly bounded to adhere to BCrypt's 72-byte input truncation boundary).
+  - Identical validation rules govern user creation (`POST /api/v1/users`) and password reset (`PATCH /api/v1/users/{id}/password`).
 
-### 8.3 Administrative Password Reset Flow
-Administrative credential reset (`PATCH /api/v1/users/{id}/password`) updates the user's password record in MySQL. Cleartext passwords must **never** be written to logs, cached in memory, or stored in transient Redis queues.
+### 8.3 Administrative Password Reset Flow & Revocation Invariants
+Administrative credential reset (`PATCH /api/v1/users/{id}/password`) updates the user's `password_hash` in MySQL.
+- Password changes do **NOT** revoke existing JWTs in M4.
+- Existing access tokens naturally expire after 1 hour (3,600,000 ms).
+- If immediate session termination is required, administrators must deactivate the account (`PATCH /api/v1/users/{id}/deactivate`).
+- Cleartext passwords must **never** be written to logs, cached in memory, or stored in transient Redis queues.
 
 ---
 
 ## 9. RBAC and Authorization Model
 
-### 9.1 Canonical Role Definitions
+### 9.1 Canonical Role Definitions and Storage
 The platform defines exactly **two canonical roles** (`docs/SRS.md` §3.1, `docs/design/System-Architecture.md` §4.3):
 1. **`ROLE_ADMIN`:** Full administrative superset privilege. Owns user account administration, platform security, customer soft-deletion, and system-level configuration.
 2. **`ROLE_MARKETER`:** Business operational privilege. Restricted to customer profile authoring, dynamic segment creation/preview, campaign launch, and performance reporting.
 
-$$\text{ROLE\_ADMIN} \supset \text{ROLE\_MARKETER}$$
+- **Role Hierarchy:**
+  $$\text{ROLE\_ADMIN} > \text{ROLE\_MARKETER}$$
+  `ROLE_ADMIN` inherits all permissions and authorities granted to `ROLE_MARKETER`.
+- **Role Storage Invariants:**
+  - Role is stored directly in `users.role` (`VARCHAR(20) NOT NULL`).
+  - No `roles` table.
+  - No `user_roles` join table.
+  - No additional roles exist in the system.
 
 ### 9.2 Endpoint Authorization Matrix (36 Endpoints)
 
@@ -258,17 +296,40 @@ $$\text{ROLE\_ADMIN} \supset \text{ROLE\_MARKETER}$$
 
 ---
 
-## 10. Security Enforcement Boundaries
+## 10. Security Enforcement Boundaries and Error Architecture
 
-### 10.1 Authentication vs. Authorization Enforcement
-- **Authentication Enforcement:** Handled globally in the servlet filter chain via `JwtAuthenticationFilter`. Executes prior to controller dispatch. Rejects missing, malformed, or expired tokens immediately with `401 Unauthorized`.
-- **Authorization Enforcement:** Enforced via Spring Security method interceptors (`@PreAuthorize("hasRole('ADMIN')")`). Executes at the service boundary. Rejects authenticated callers lacking required authorities with `403 Forbidden`.
+### 10.1 Security Error Handling Architecture
+The platform establishes a strict three-tier error separation between servlet filter-chain security events and application controller exceptions:
+1. **`AuthenticationEntryPoint` (`401 Unauthorized`):**
+   - Invoked directly by the Spring Security filter chain when an unauthenticated caller accesses a protected endpoint, a JWT is missing, malformed, or expired, or the user is marked inactive (`users.is_active == false`).
+   - Does NOT delegate to `@RestControllerAdvice` / `GlobalExceptionHandler`.
+2. **`AccessDeniedHandler` (`403 Forbidden`):**
+   - Invoked directly by the Spring Security filter chain when an authenticated caller lacks the required role authority (e.g., `ROLE_MARKETER` attempting an ADMIN-only endpoint).
+   - Does NOT delegate to `@RestControllerAdvice` / `GlobalExceptionHandler`.
+3. **`GlobalExceptionHandler` (`@RestControllerAdvice`):**
+   - Handles all business exceptions, Jakarta Bean Validation failures (`MethodArgumentNotValidException`), resource not found exceptions, and unhandled controller/service runtime exceptions.
 
-### 10.2 Administrative Self-Protection Invariant
+### 10.2 Administrative Self-Protection Invariants
 The platform service layer strictly enforces self-protection invariants:
 1. An administrator cannot demote their own account role (`PATCH /api/v1/users/{id}/role`).
 2. An administrator cannot deactivate their own active account (`PATCH /api/v1/users/{id}/deactivate`).
 Violation attempts are rejected with `400 Bad Request` or `409 Conflict`.
+
+### 10.3 Initial Admin Bootstrap Semantics & Invariants
+Because all user provisioning endpoints (`POST /api/v1/users`) are restricted to `ROLE_ADMIN`, the system requires an automated initial administrator bootstrap mechanism.
+
+- **Bootstrap Execution Condition:**
+  Initial provisioning executes **ONLY WHEN**:
+  $$\text{userRepository.count()} == 0$$
+- **Provisioning Invariants:**
+  - **Empty `users` Table:** If the `users` table is completely empty (`count == 0`), the bootstrap runner creates exactly **one** configured `ROLE_ADMIN` account.
+  - **Non-Empty `users` Table:** If `userRepository.count() > 0`, the bootstrap runner performs **no action** and exits immediately.
+  - **Single Execution Guarantee:** Additional administrative or marketer users are created exclusively through the authenticated, ADMIN-protected endpoint `POST /api/v1/users`.
+  - **Infrastructure Constraints:** No Redis and no distributed locking are used for bootstrap coordination.
+  - **Transactionality:** The bootstrap check and insertion are executed within a local database transaction.
+  - **Credential Governance:** Bootstrap administrative credentials must be externalized (via configuration/environment variables). No plaintext passwords are logged, and no credentials are hardcoded in source code or Git.
+- **Operational Edge Case:**
+  If the `users` table is non-empty (`count > 0`) but contains zero active `ROLE_ADMIN` accounts (e.g., due to accidental operational misconfiguration or soft-deactivation), automatic bootstrap does **NOT** intervene. System recovery requires an explicit operational or DBA procedure.
 
 ---
 
@@ -685,8 +746,8 @@ The following technologies and patterns are **strictly excluded** from the platf
 ## 30. Decision Register
 
 ### 30.1 Decided Architecture Invariants (`[DECIDED]`)
-1. **Stateless Security:** Spring Security 6.x with stateless JWT bearer token authentication (`NFR-SEC-001`).
-2. **Two-Role Taxonomy:** Exactly two canonical roles: `ROLE_ADMIN` and `ROLE_MARKETER`; ADMIN is superset.
+1. **Stateless Security:** Spring Security 6.x with stateless JWT bearer token authentication (`NFR-SEC-001`). Zero server-side HTTP session state.
+2. **Two-Role Taxonomy:** Exactly two canonical roles: `ROLE_ADMIN` and `ROLE_MARKETER`; ADMIN is superset (`ROLE_ADMIN > ROLE_MARKETER`). Role stored in `users.role` (`VARCHAR(20)`). No `roles` or `user_roles` tables.
 3. **Sole Persistent Store:** MySQL 8.x (InnoDB) is the sole persistent source of truth.
 4. **Database Transaction Isolation:** `READ COMMITTED` isolation level across all relational operations (`DBD-18`).
 5. **Transient Async Messaging:** Redis Streams operates strictly as transient asynchronous messaging transport.
@@ -696,19 +757,19 @@ The following technologies and patterns are **strictly excluded** from the platf
 9. **Zero-Audience Campaign Launch:** Launch is rejected; campaign remains in `DRAFT` status and does not transition to `RUNNING`.
 10. **Untrusted AI Perimeter:** Google Gemini is an untrusted external service; Gemini never generates executable SQL; schema-first AST validation via Criteria API compiles safe queries.
 11. **AI Reporting Source of Truth:** Authoritative facts originate from MySQL; narrative summaries persist in `campaigns.ai_summary`.
+12. **JWT Algorithm & Secret (`ODD-SEC-08`):** `HS256` (HMAC-SHA256). `JWT_SECRET` is mandatory with no fallback; application startup fails if missing or < 32 UTF-8 bytes (256 bits). Issuer: `cs-crm-2026`.
+13. **Access Token Lifetime (`ODD-SEC-01`):** Exactly 1 hour / 3,600,000 ms.
+14. **Refresh Token Scope (`ODD-SEC-02`):** Refresh tokens are NOT implemented in M4.
+15. **Live Authority & Token Revocation (`ODD-SEC-03`):** On every request, after cryptographic token validation, `JwtAuthenticationFilter` reloads the user from MySQL, checks `users.is_active` (401 via `AuthenticationEntryPoint` if inactive), and assigns the current DB role as authoritative `GrantedAuthority` (DB role wins over JWT role claim). Password changes do NOT revoke existing JWTs (expire naturally after 1 hour). Immediate termination via account deactivation. Zero Redis blacklist state.
+16. **Password Hashing (`ODD-SEC-04`):** BCrypt strength 12. Plaintext passwords are never stored or logged.
+17. **Password Policy (`ODD-SEC-05`):** Minimum 8 characters, maximum 72 characters, maximum 72 UTF-8 bytes across user creation and password update.
+18. **Initial Admin Bootstrap:** Executes strictly when `userRepository.count() == 0`; creates exactly 1 configured `ROLE_ADMIN`; does nothing if `count > 0`. If `count > 0` and no active admin exists, automatic bootstrap does NOT run (requires DBA intervention). No Redis or distributed locking.
 
 ### 30.2 Recommended Architectural Patterns (`[RECOMMENDED]`)
-1. **Password Hashing:** BCrypt password hashing with per-user salt evaluated as preferred algorithm.
-2. **Standardized Response Envelope:** Uniform success/error envelope across all REST endpoints.
-3. **OpenAPI Tooling:** SpringDoc OpenAPI 2.x (OpenAPI 3.x-compatible) for Spring Boot 3.x.
+1. **Standardized Response Envelope:** Uniform success/error envelope across all REST endpoints.
+2. **OpenAPI Tooling:** SpringDoc OpenAPI 2.x (OpenAPI 3.x-compatible) for Spring Boot 3.x.
 
 ### 30.3 Open Design Decisions (`[OPEN DESIGN DECISION]`)
-- **`ODD-SEC-01`:** JWT Access Token Lifetime duration.
-- **`ODD-SEC-02`:** Refresh Token support, lifecycle, and storage strategy.
-- **`ODD-SEC-03`:** JWT Token Revocation strategy (stateless expiration vs. user `is_active` check vs. DB-backed).
-- **`ODD-SEC-04`:** Password Hashing algorithm finalization and computational cost parameters.
-- **`ODD-SEC-05`:** Formal password complexity policy and regex constraints.
-- **`ODD-SEC-08`:** JWT cryptographic signing algorithm (symmetric HMAC vs. asymmetric RSA/ECDSA).
 - **`ODD-ASYNC-01`:** Redis Stream key name and consumer group naming conventions.
 - **`ODD-ASYNC-02`:** MySQL $\to$ Redis enqueue failure reconciliation mechanism.
 - **`ODD-AI-02`:** Gemini model selection (`gemini-1.5-flash` vs `gemini-1.5-pro`) and generation parameters.
@@ -738,9 +799,9 @@ The following technologies and patterns are **strictly excluded** from the platf
 
 | Requirement ID | Architectural Focus | Classification | Implementation & Design Realization |
 | :--- | :--- | :--- | :--- |
-| **`FR-SEC-001`** | Authentication & User Mgmt | `[EXPLICIT SRS]` | Salted password hashing; JWT token issuance; `/api/v1/auth/login`. |
-| **`FR-SEC-002`** | Role-Based Access Control | `[EXPLICIT SRS]` | Exactly two roles (`ROLE_ADMIN`, `ROLE_MARKETER`); method security. |
-| **`NFR-SEC-001`** | Stateless Session Security | `[EXPLICIT SRS]` | Stateless JWT Bearer authentication; zero server HTTP session state. |
+| **`FR-SEC-001`** | Authentication & User Mgmt | `[EXPLICIT SRS]` | BCrypt strength 12; JWT token issuance; `/api/v1/auth/login` (username/email lookup); 1h lifetime. |
+| **`FR-SEC-002`** | Role-Based Access Control | `[EXPLICIT SRS]` | Exactly two roles (`ROLE_ADMIN`, `ROLE_MARKETER`); hierarchy `ROLE_ADMIN > ROLE_MARKETER`; live DB authority. |
+| **`NFR-SEC-001`** | Stateless Session Security | `[EXPLICIT SRS]` | Stateless JWT Bearer authentication; zero server HTTP session state; live active check. |
 | **`NFR-SEC-002`** | Transport Layer Encryption | `[EXPLICIT SRS]` | HTTPS/TLS required in deployed environments; exact version open. |
 | **`FR-DEL-001`** | Async Message Dispatch | `[EXPLICIT SRS]` | Redis Streams transient transport; background consumer worker threads. |
 | **`FR-DEL-002`** | Simulated Delivery Worker | `[EXPLICIT SRS]` | 90% success, 10% simulated failure; at-least-once dispatch semantics. |
@@ -768,14 +829,14 @@ The following technologies and patterns are **strictly excluded** from the platf
 ## 33. Implementation Boundaries
 
 - **No Implementation Code in Design:** This specification defines architectural contracts and operational boundaries. No Java classes, configuration files, or database DDL scripts are provided herein.
-- **Subordination Invariant:** Developers implementing Phase 3 must strictly adhere to the baseline chain: `SRS v1.0.1` $\to$ `System Architecture v1.0.0` $\to$ `Database Design v1.0.0` $\to$ `API Design v1.0.0` $\to$ `Security-Async-AI.md v1.0.0`.
+- **Subordination Invariant:** Developers implementing Phase 3 must strictly adhere to the baseline chain: `SRS v1.0.1` $\to$ `System Architecture v1.0.0` $\to$ `Database Design v1.0.1` $\to$ `API Design v1.0.0` $\to$ `Security-Async-AI.md v1.1.0`.
 
 ---
 
 ## 34. Summary
 
 The Security, Asynchronous Delivery, and AI Architecture Specification establishes a cohesive, enterprise-grade foundation for the **Enterprise AI-CRM Platform (`CS-CRM-2026`)**:
-- **Stateless & Robust Security:** Comprehensive identity governance using Spring Security 6.x, JWT bearer tokens, and least-privilege RBAC.
+- **Stateless & Robust Security:** Comprehensive identity governance using Spring Security 6.x, JWT bearer tokens (HS256, 1h lifetime), live MySQL active/role authority verification, BCrypt strength 12, and least-privilege RBAC (`ROLE_ADMIN > ROLE_MARKETER`).
 - **Resilient Asynchronous Delivery:** Scalable Redis Streams transport operating under realistic at-least-once semantics, backed by authoritative MySQL persistence and conditional state transitions.
 - **Zero-Trust AI Integration:** Complete containment of external LLM interactions through schema-first AST validation, dynamic Criteria API compilation, customer data minimization, and persistent compliance auditing.
 
@@ -783,8 +844,15 @@ The Security, Asynchronous Delivery, and AI Architecture Specification establish
 
 ## 35. Document Status
 
-- **Status:** **APPROVED BASELINE**
+- **Status:** **APPROVED BASELINE (M4 SECURITY FROZEN)**
 - **Lifecycle Phase:** Phase 2 — System Design
-- **Approved Baseline Chain:** SRS v1.0.1 → System Architecture v1.0.0 → Database Design v1.0.0 → API Design v1.0.0 → Security + Async + AI Design v1.0.0
+- **Approved Baseline Chain:** SRS v1.0.1 → System Architecture v1.0.0 → Database Design v1.0.1 → API Design v1.0.0 → Security + Async + AI Design v1.1.0
 
 ---
+
+## 36. Revision History
+
+| Version | Date | Author | Description | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| 1.0.0 | 2026-09-19 | System Architecture, Enterprise Security, & Async Infrastructure Engineering Team | Initial Security, Asynchronous Delivery, and AI Architecture Specification baseline. | Approved |
+| 1.1.0 | 2026-09-20 | System Architecture, Enterprise Security, & Async Infrastructure Engineering Team | Formally froze M4 Security Baseline: Closed ODD-SEC-01 (1h token lifetime), ODD-SEC-02 (refresh tokens omitted in M4), ODD-SEC-03 (live DB active check; password change does not revoke tokens; no Redis blacklist), ODD-SEC-04 (BCrypt strength 12), ODD-SEC-05 (8-72 chars / 72 UTF-8 bytes), and ODD-SEC-08 (HS256, mandatory JWT_SECRET >= 32 bytes). Defined live database role authority (DB role wins over diagnostic JWT role claim), three-tier security error separation (AuthenticationEntryPoint = 401, AccessDeniedHandler = 403, GlobalExceptionHandler), admin self-protection invariants, and initial admin bootstrap semantics (userRepository.count() == 0). | Approved |
