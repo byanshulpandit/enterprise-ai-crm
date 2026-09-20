@@ -5,3 +5,7 @@ spring:
     exclude:
       - org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration
       - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+---
+security:
+  jwt:
+    secret: "deterministic-test-jwt-secret-key-at-least-32-bytes-long-2026"
