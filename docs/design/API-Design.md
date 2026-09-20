@@ -365,8 +365,26 @@ The exact error response envelope representation remains an **`[OPEN DESIGN DECI
 
 *Trade-off Analysis:* Option A mirrors the success envelope structure (`success: false`), providing symmetric parsing for client applications. Option B aligns with IETF RFC 7807 standards, simplifying integration with API gateways and third-party API clients. This decision will be finalized prior to implementation freeze.
 
-### 11.2 Error Sanitization Invariant
-Regardless of the envelope chosen, the error handling layer (`@ControllerAdvice`) strictly enforces that internal database exceptions (e.g., MySQL syntax errors, constraint names, stack traces) are masked from external API responses. Sensitive details are logged internally with an associated `requestId`.
+### 11.2 Milestone 3 (M3) Baseline Implementation
+During **M2**, an initial implementation of Option A was introduced as prerequisite scaffolding to enable customer CRUD operations. In **Milestone 3 (M3)**, this error envelope and validation layer were formalized and hardened as the platform-level baseline:
+
+1. **Standardized Error Codes & HTTP Status Mapping:**
+   - `VALIDATION_FAILED` (`400 Bad Request`): Bean validation failures (`MethodArgumentNotValidException`, `ConstraintViolationException`) with field-level details identifying the rejected attribute and message.
+   - `MALFORMED_REQUEST` (`400 Bad Request`): Syntactically broken or unreadable JSON payloads (`HttpMessageNotReadableException`).
+   - `INVALID_PARAMETER` (`400 Bad Request`): URI path variable or request parameter type mismatch (`MethodArgumentTypeMismatchException`).
+   - `BAD_REQUEST` (`400 Bad Request`): General invalid requests or unapproved sort fields (`InvalidRequestException`).
+   - `RESOURCE_NOT_FOUND` (`404 Not Found`): Entity lookup failures (`ResourceNotFoundException`) or unmapped endpoints (`NoResourceFoundException`).
+   - `METHOD_NOT_ALLOWED` (`405 Method Not Allowed`): Unsupported HTTP verbs (`HttpRequestMethodNotSupportedException`).
+   - `DUPLICATE_RESOURCE` (`409 Conflict`): Unique constraint violations or active duplicate email (`DuplicateResourceException`, `DataIntegrityViolationException`).
+   - `UNSUPPORTED_MEDIA_TYPE` (`415 Unsupported Media Type`): Non-JSON / unsupported content types (`HttpMediaTypeNotSupportedException`).
+   - `INTERNAL_SERVER_ERROR` (`500 Internal Server Error`): Catch-all fallback masking internal errors and stack traces (`Exception`).
+
+2. **Error Sanitization Invariant:**
+   The error handling layer (`@RestControllerAdvice`) strictly enforces that internal database exceptions (e.g., MySQL syntax errors, constraint names, stack traces) are masked from external API responses. Sensitive details are logged internally at ERROR level with an associated `requestId`.
+
+3. **Deferred / Future Scope:**
+   - Multi-language localization (i18n) of validation messages is deferred to future platform milestones; standard English messages are enforced in v1.
+   - RFC 7807 problem details adapter support remains an open design option for future API gateway integration.
 
 ---
 

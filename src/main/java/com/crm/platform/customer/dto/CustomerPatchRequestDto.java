@@ -3,6 +3,7 @@ package com.crm.platform.customer.dto;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
@@ -11,12 +12,15 @@ import java.util.Set;
 
 public class CustomerPatchRequestDto {
 
+    @Pattern(regexp = "^(?!\\s*$).+", message = "First name cannot be blank if provided")
     @Size(max = 100, message = "First name must not exceed 100 characters")
     private String firstName;
 
+    @Pattern(regexp = "^(?!\\s*$).+", message = "Last name cannot be blank if provided")
     @Size(max = 100, message = "Last name must not exceed 100 characters")
     private String lastName;
 
+    @Pattern(regexp = "^(?!\\s*$).+", message = "Email cannot be blank if provided")
     @Email(message = "Email must be a valid email address")
     @Size(max = 255, message = "Email must not exceed 255 characters")
     private String email;
