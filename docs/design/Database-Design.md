@@ -6,10 +6,10 @@
 ### Document Metadata
 - **Project Code:** CS-CRM-2026
 - **System Name:** Enterprise AI-CRM Platform
-- **Document Version:** 1.0.0
+- **Document Version:** 1.0.1
 - **SDLC Phase:** Phase 2 — System Design (Database Design Specification)
 - **Author:** System Architecture & Database Engineering Team
-- **Date:** 2026-09-19
+- **Date:** 2026-09-20
 - **Primary Source of Truth:** [Software Requirements Specification (docs/SRS.md)](file:///c:/Users/ANSHUL%20GAUTAM/OneDrive/Desktop/CLG-CRM/docs/SRS.md) v1.0.1
 - **Architectural Reference:** [System Architecture Document (docs/design/System-Architecture.md)](file:///c:/Users/ANSHUL%20GAUTAM/OneDrive/Desktop/CLG-CRM/docs/design/System-Architecture.md) v1.0.0
 - **Target Audience:** Database Administrators, Backend Engineers, System Architects, Academic Evaluators
@@ -156,13 +156,15 @@ The confirmed v1 persistent database schema consists of exactly **8 relational t
 | `total_spend` | `DECIMAL(12,2)` | NO | `0.00` | None | Cumulative lifetime spend amount. |
 | `visit_count` | `INT UNSIGNED` | NO | `0` | None | Total recorded visits / interactions. |
 | `last_active_date` | `DATE` | YES | `NULL` | None | Date of most recent customer activity. |
-| `status` | `VARCHAR(20)` | NO | `'ACTIVE'` | None | Operational status (`ACTIVE`, `INACTIVE`). |
 | `created_at` | `DATETIME(6)` | NO | None | None | Registration timestamp (UTC). |
 | `updated_at` | `DATETIME(6)` | NO | None | None | Last modification timestamp (UTC). |
-| `deleted_at` | `DATETIME(6)` | YES | `NULL` | None | Soft-delete marker (`NULL` = active, non-null = deleted). |
+| `deleted_at` | `DATETIME(6)` | YES | `NULL` | None | Sole customer lifecycle marker (`NULL` = active, non-null = soft-deleted). |
 
 - **Foreign Keys:** None.
-- **Delete Behavior:** Soft deletion exclusively (`FR-CUST-005`). Customer records are never physically removed during standard operations, permanently preserving foreign key referential integrity with delivery records.
+- **Lifecycle & Delete Behavior:** Soft deletion exclusively (`FR-CUST-005`). In strict alignment with `docs/SRS.md` (`FR-CUST-001`, `FR-CUST-005`, `FR-CUST-007`), `docs/design/System-Architecture.md` §5.2, `docs/design/API-Design.md` §14.2, and `docs/design/Implementation-Plan.md` §11.6, `deleted_at` is the sole customer lifecycle state marker:
+  - `deleted_at IS NULL` = Active customer (accessible via API endpoints, counted in active totals via `GET /api/v1/customers/count`, and included in segmentation evaluation via dynamic query predicate `WHERE deleted_at IS NULL`).
+  - `deleted_at IS NOT NULL` = Soft-deleted customer (excluded from active directory listings, counts, and segment queries; API queries for soft-deleted customer IDs return `404 Not Found`).
+  Customer records are never physically removed during standard platform operations, permanently preserving foreign key referential integrity with historical `campaign_delivery_records`. No separate operational `status` column exists.
 - **Update Behavior:** Monitored via Spring Data JPA auditing; `updated_at` refreshed on modification.
 
 ---
@@ -460,7 +462,7 @@ Segment rules are persisted in `segments.rules` as a native MySQL `JSON` documen
 ### 13.2 Governance & Execution Model
 1. **Storage vs. Execution:** The `JSON` column serves strictly as a persistent storage representation of the recursive rule tree. MySQL JSON query functions (`JSON_EXTRACT`, `JSON_TABLE`) are **not** the primary segmentation query engine.
 2. **Application Validation Boundary:** The application service layer is solely responsible for validating the AST before persistence:
-   - Mandatory field whitelist enforcement (`city`, `country`, `total_spend`, `visit_count`, `last_active_date`, `status`, `tag`).
+   - Mandatory field whitelist enforcement (`city`, `country`, `total_spend`, `visit_count`, `last_active_date`, `tag`).
    - Mandatory operator whitelist enforcement (`EQUALS`, `NOT_EQUALS`, `GREATER_THAN`, `LESS_THAN`, `GREATER_THAN_OR_EQUAL`, `LESS_THAN_OR_EQUAL`, `IN`, `NOT_IN`, `CONTAINS`).
    - Compatible value type verification and structural AST integrity checks.
    - Configurable complexity constraints (such as nesting depth and leaf count) are governed by application configuration rather than arbitrary schema limits.
@@ -706,3 +708,12 @@ The database design for **`CS-CRM-2026`** establishes an enterprise-grade, relat
 - **Relational Rigor:** 8 normalized tables with database-enforced foreign key referential integrity (`RESTRICT`), surrogate `BIGINT AUTO_INCREMENT` clustered primary keys, and soft deletion preserving communication history.
 - **Controlled Hybrid JSON:** Native MySQL `JSON` is applied strictly to Abstract Syntax Trees (`segments.rules`, `ai_segment_audits.generated_rules`) and validation error payloads (`upload_history.error_details`), evaluated in Java via Spring Data JPA Criteria API.
 - **Operational Robustness:** Strict delivery deduplication via `UNIQUE(campaign_id, customer_id)`, zero-audience launch rejection, and authoritative campaign completion invariants eliminate data inconsistencies across async worker threads.
+
+---
+
+## 28. Revision History
+
+| Version | Date | Author | Description | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| 1.0.0 | 2026-09-19 | System Architecture & Database Engineering Team | Initial Database Design Specification baseline. | Approved |
+| 1.0.1 | 2026-09-20 | System Architecture & Database Engineering Team | Documentation Reconciliation: Removed obsolete `customers.status` column from §6.2 and §13.2; formalized `deleted_at` as the sole customer lifecycle marker (`NULL` = active, non-null = soft-deleted) in full alignment with `SRS.md` (`FR-CUST-001`, `FR-CUST-005`, `FR-CUST-007`), `System-Architecture.md` §5.2, `API-Design.md` §14.2, and `Implementation-Plan.md` §11.6. | Approved |
