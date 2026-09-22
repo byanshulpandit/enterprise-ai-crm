@@ -49,11 +49,18 @@ public class UserControllerTest {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @Autowired(required = false)
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     private User adminUser;
     private User targetUser;
 
     @BeforeEach
     void setUp() {
+        if (jdbcTemplate != null) {
+            jdbcTemplate.update("DELETE FROM campaigns");
+            jdbcTemplate.update("DELETE FROM segments");
+        }
         userRepository.deleteAll();
 
         adminUser = new User("admin_super", "admin@crm.internal", passwordEncoder.encode("AdminPass123!"), RoleEnum.ROLE_ADMIN, Boolean.TRUE);

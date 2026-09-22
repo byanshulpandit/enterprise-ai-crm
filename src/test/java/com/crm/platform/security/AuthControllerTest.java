@@ -44,8 +44,15 @@ public class AuthControllerTest {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @Autowired(required = false)
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     @BeforeEach
     void setUp() {
+        if (jdbcTemplate != null) {
+            jdbcTemplate.update("DELETE FROM campaigns");
+            jdbcTemplate.update("DELETE FROM segments");
+        }
         userRepository.deleteAll();
 
         // Active admin

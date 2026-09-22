@@ -61,12 +61,19 @@ public class JwtSecurityIntegrationTest {
     @Autowired
     private JwtProperties jwtProperties;
 
+    @Autowired(required = false)
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     private User testAdmin;
     private User testMarketer;
     private Customer testCustomer;
 
     @BeforeEach
     void setUp() {
+        if (jdbcTemplate != null) {
+            jdbcTemplate.update("DELETE FROM campaigns");
+            jdbcTemplate.update("DELETE FROM segments");
+        }
         customerRepository.deleteAll();
         userRepository.deleteAll();
 

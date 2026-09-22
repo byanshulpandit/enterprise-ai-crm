@@ -52,3 +52,42 @@ CREATE TABLE IF NOT EXISTS users (
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
   COLLATE=utf8mb4_0900_ai_ci;
+
+-- Milestone 5: Audience & Campaign Domain Schema
+
+CREATE TABLE IF NOT EXISTS segments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(500) NULL,
+    rules JSON NOT NULL,
+    created_by BIGINT UNSIGNED NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+
+    CONSTRAINT fk_segments_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    INDEX idx_seg_created_by (created_by)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS campaigns (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(150) NOT NULL,
+    description VARCHAR(500) NULL,
+    segment_id BIGINT UNSIGNED NOT NULL,
+    message_template TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
+    personalization_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    ai_summary TEXT NULL,
+    created_by BIGINT UNSIGNED NOT NULL,
+    started_at DATETIME(6) NULL,
+    completed_at DATETIME(6) NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+
+    CONSTRAINT chk_campaigns_status CHECK (status IN ('DRAFT', 'RUNNING', 'COMPLETED', 'FAILED')),
+    CONSTRAINT fk_campaigns_segment FOREIGN KEY (segment_id) REFERENCES segments(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT fk_campaigns_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    INDEX idx_camp_status (status),
+    INDEX idx_camp_segment_id (segment_id),
+    INDEX idx_camp_created_by (created_by)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
