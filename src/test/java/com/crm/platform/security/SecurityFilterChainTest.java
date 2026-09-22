@@ -75,11 +75,12 @@ public class SecurityFilterChainTest {
     @Test
     @DisplayName("3. Public auth endpoint (/api/v1/auth/login) is permitted without authentication in the filter chain")
     void testPublicLoginEndpointPermittedWithoutAuthentication() throws Exception {
-        // Since login endpoint is not implemented yet, passing security filter chain results in 404 (not 401)
+        // Public endpoint passes security filter chain without Authorization header and reaches AuthController
         mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"test\",\"password\":\"pass\"}"))
-                .andExpect(status().isNotFound());
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code", is("VALIDATION_FAILED")));
     }
 
     @Test

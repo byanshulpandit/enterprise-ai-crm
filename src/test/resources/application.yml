@@ -5,3 +5,8 @@ spring:
 security:
   jwt:
     secret: "deterministic-test-jwt-secret-key-at-least-32-bytes-long-2026"
+  bootstrap:
+    admin:
+      username: "test_admin"
+      email: "test_admin@crm.internal"
+      password: "TestAdminPassword123!"

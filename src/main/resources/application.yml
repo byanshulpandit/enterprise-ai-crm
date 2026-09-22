@@ -35,3 +35,8 @@ security:
     secret: ${JWT_SECRET}
     issuer: cs-crm-2026
     expiration-ms: 3600000
+  bootstrap:
+    admin:
+      username: ${BOOTSTRAP_ADMIN_USERNAME:}
+      email: ${BOOTSTRAP_ADMIN_EMAIL:}
+      password: ${BOOTSTRAP_ADMIN_PASSWORD:}

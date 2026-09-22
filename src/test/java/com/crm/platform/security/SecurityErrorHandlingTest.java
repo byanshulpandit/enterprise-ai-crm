@@ -192,4 +192,40 @@ public class SecurityErrorHandlingTest {
         ErrorResponse errorResponse = objectMapper.readValue(response.getContentAsString(), ErrorResponse.class);
         assertThat(errorResponse.getError().getCode()).isEqualTo("FORBIDDEN");
     }
+
+    // ==========================================
+    // Contract Parity Test (Audit 4)
+    // ==========================================
+
+    @Test
+    @DisplayName("GlobalExceptionHandler and SecurityAccessDeniedHandler produce identical 403 JSON contracts")
+    void globalExceptionHandlerAndAccessDeniedHandlerProduceIdentical403Contract() throws Exception {
+        com.crm.platform.common.exception.GlobalExceptionHandler globalHandler =
+                new com.crm.platform.common.exception.GlobalExceptionHandler();
+
+        AccessDeniedException testException = new AccessDeniedException("Method security denied invocation");
+
+        // 1. Filter-chain handler response
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/users");
+        MockHttpServletResponse filterResponse = new MockHttpServletResponse();
+        accessDeniedHandler.handle(request, filterResponse, testException);
+
+        assertThat(filterResponse.getStatus()).isEqualTo(403);
+        ErrorResponse filterError = objectMapper.readValue(filterResponse.getContentAsString(), ErrorResponse.class);
+
+        // 2. Controller/method-security handler response
+        org.springframework.http.ResponseEntity<ErrorResponse> mvcResponse = globalHandler.handleAccessDenied(testException);
+
+        assertThat(mvcResponse.getStatusCode().value()).isEqualTo(403);
+        ErrorResponse mvcError = mvcResponse.getBody();
+
+        // 3. Verify identical contract
+        assertThat(filterError).isNotNull();
+        assertThat(mvcError).isNotNull();
+        assertThat(filterError.isSuccess()).isFalse();
+        assertThat(mvcError.isSuccess()).isFalse();
+        assertThat(mvcError.getError().getCode()).isEqualTo(filterError.getError().getCode()).isEqualTo("FORBIDDEN");
+        assertThat(mvcError.getError().getMessage()).isEqualTo(filterError.getError().getMessage())
+                .isEqualTo("Access denied. You do not have permission to access this resource.");
+    }
 }
