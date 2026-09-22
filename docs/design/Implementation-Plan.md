@@ -592,6 +592,7 @@ Requires `M2`, `M3`, and `M4`.
   - Whitelisted operators (`EQUALS`, `GREATER_THAN`, `BETWEEN`, `CONTAINS`, etc.).
   - Combinators (`AND`, `OR`).
   - Value type compatibility.
+  - Bounded recursive depth limit (`MAX_DEPTH = 10`; rejects trees exceeding depth with clean 400 Bad Request to prevent stack overflow or unbounded recursion).
 - Criteria API Compilation: `CriteriaQueryCompiler` dynamically converting validated AST into a `Predicate` applied to `Customer` entity:
   - Mandatory inclusion of `WHERE deleted_at IS NULL`.
   - Zero raw SQL concatenation.
@@ -631,6 +632,8 @@ Commit: `feat(segment): implement dynamic rule AST validation, Criteria API comp
 
 ### 15.13 Definition of Done & Exit Criteria
 Dynamic queries evaluate accurately against live MySQL customer data; AST validation rejects malformed trees.
+- **Status:** **`[IMPLEMENTED & VERIFIED]`**
+- **Test Results:** 290/290 tests passing (`mvn clean test` and `mvn clean package` successful; 0 failures, 0 errors, 0 skipped; 52 new M6 tests added across unit, model, parser, compiler, controller, and live MySQL integration test suites from 238 M5 baseline). No pre-existing test cases were deleted or replaced. Existing test classes were extended with additional M6 test cases. Schema validation, AST parsing, whitelisted field/operator validation, bounded recursive depth limit (`MAX_DEPTH = 10`), JPA Criteria API compilation with strict `deleted_at IS NULL` soft-delete filtering, correlated subquery `CustomerTag` handling (eliminating cartesian and duplicate rows; no application-level N+1 query pattern; tag filtering uses correlated Criteria subqueries executed within the database query), preview endpoint (`POST /api/v1/segments/{id}/preview`), paginated members endpoint (`GET /api/v1/segments/{id}/members`), count and member `totalElements` consistency, and M4 security authorization (`ROLE_ADMIN`, `ROLE_MARKETER`) fully verified against live MySQL 8.x database.
 
 ### 15.14 Dependencies on Later Milestones
 Enables `M5` campaign launch and `M10` AI rule generation.

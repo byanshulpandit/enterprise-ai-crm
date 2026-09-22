@@ -5,16 +5,29 @@ import com.crm.platform.common.exception.ConflictException;
 import com.crm.platform.common.exception.DuplicateResourceException;
 import com.crm.platform.common.exception.InvalidRequestException;
 import com.crm.platform.common.exception.ResourceNotFoundException;
+import com.crm.platform.customer.dto.CustomerResponseDto;
+import com.crm.platform.customer.entity.Customer;
+import com.crm.platform.customer.mapper.CustomerMapper;
+import com.crm.platform.customer.repository.CustomerRepository;
+import com.crm.platform.segment.compiler.SegmentCriteriaCompiler;
 import com.crm.platform.segment.dto.SegmentCreateRequest;
+import com.crm.platform.segment.dto.SegmentPreviewResponse;
 import com.crm.platform.segment.dto.SegmentUpdateRequest;
 import com.crm.platform.segment.entity.Segment;
+import com.crm.platform.segment.model.RuleNode;
+import com.crm.platform.segment.parser.SegmentRuleParser;
 import com.crm.platform.segment.repository.SegmentRepository;
 import com.crm.platform.user.entity.User;
 import com.crm.platform.user.repository.UserRepository;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
 
 @Service
 @Transactional
@@ -23,13 +36,25 @@ public class SegmentServiceImpl implements SegmentService {
     private final SegmentRepository segmentRepository;
     private final CampaignRepository campaignRepository;
     private final UserRepository userRepository;
+    private final CustomerRepository customerRepository;
+    private final CustomerMapper customerMapper;
+    private final SegmentRuleParser ruleParser;
+    private final SegmentCriteriaCompiler criteriaCompiler;
 
     public SegmentServiceImpl(SegmentRepository segmentRepository,
                               CampaignRepository campaignRepository,
-                              UserRepository userRepository) {
+                              UserRepository userRepository,
+                              CustomerRepository customerRepository,
+                              CustomerMapper customerMapper,
+                              SegmentRuleParser ruleParser,
+                              SegmentCriteriaCompiler criteriaCompiler) {
         this.segmentRepository = segmentRepository;
         this.campaignRepository = campaignRepository;
         this.userRepository = userRepository;
+        this.customerRepository = customerRepository;
+        this.customerMapper = customerMapper;
+        this.ruleParser = ruleParser;
+        this.criteriaCompiler = criteriaCompiler;
     }
 
     @Override
@@ -109,6 +134,37 @@ public class SegmentServiceImpl implements SegmentService {
     @Transactional(readOnly = true)
     public Page<Segment> listSegments(Pageable pageable) {
         return segmentRepository.findAll(pageable);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Specification<Customer> compileSegmentRules(Long id) {
+        Segment segment = getSegmentById(id);
+        RuleNode ast = ruleParser.parse(segment.getRules());
+        return criteriaCompiler.compile(ast);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public SegmentPreviewResponse previewSegment(Long id) {
+        Segment segment = getSegmentById(id);
+        Specification<Customer> spec = compileSegmentRules(id);
+        long count = customerRepository.count(spec);
+        return new SegmentPreviewResponse(
+                segment.getId(),
+                segment.getName(),
+                count,
+                Instant.now()
+        );
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<CustomerResponseDto> getSegmentMembers(Long id, Pageable pageable) {
+        Specification<Customer> spec = compileSegmentRules(id);
+        Pageable effectivePageable = pageable != null ? pageable : PageRequest.of(0, 20, Sort.by(Sort.Direction.ASC, "id"));
+        Page<Customer> page = customerRepository.findAll(spec, effectivePageable);
+        return page.map(customerMapper::toDto);
     }
 
     private User resolveUser(String username) {

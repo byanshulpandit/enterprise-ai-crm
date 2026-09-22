@@ -33,6 +33,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.crm.platform.customer.mapper.CustomerMapper;
+import com.crm.platform.customer.repository.CustomerRepository;
+import com.crm.platform.segment.compiler.SegmentCriteriaCompiler;
+import com.crm.platform.segment.parser.SegmentRuleParser;
+
 @ExtendWith(MockitoExtension.class)
 public class SegmentServiceTest {
 
@@ -45,13 +50,33 @@ public class SegmentServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private CustomerRepository customerRepository;
+
+    @Mock
+    private CustomerMapper customerMapper;
+
+    @Mock
+    private SegmentRuleParser ruleParser;
+
+    @Mock
+    private SegmentCriteriaCompiler criteriaCompiler;
+
     private SegmentServiceImpl segmentService;
     private ObjectMapper objectMapper;
     private User testUser;
 
     @BeforeEach
     void setUp() {
-        segmentService = new SegmentServiceImpl(segmentRepository, campaignRepository, userRepository);
+        segmentService = new SegmentServiceImpl(
+                segmentRepository,
+                campaignRepository,
+                userRepository,
+                customerRepository,
+                customerMapper,
+                ruleParser,
+                criteriaCompiler
+        );
         objectMapper = new ObjectMapper();
         testUser = new User("admin_user", "admin@crm.internal", "hash", RoleEnum.ROLE_ADMIN, Boolean.TRUE);
         testUser.setId(1L);
@@ -240,5 +265,64 @@ public class SegmentServiceTest {
 
         assertThat(result.getTotalElements()).isEqualTo(1);
         assertThat(result.getContent().get(0).getName()).isEqualTo("Segment 1");
+    }
+
+    @Test
+    @DisplayName("previewSegment parses rules, compiles criteria, and returns count")
+    void previewSegment_Success() {
+        Segment segment = new Segment("Preview Seg", "Desc", "{\"field\":\"city\",\"op\":\"EQUALS\",\"value\":\"Delhi\"}", testUser);
+        segment.setId(100L);
+        when(segmentRepository.findById(100L)).thenReturn(Optional.of(segment));
+
+        com.crm.platform.segment.model.RuleNode mockAst = org.mockito.Mockito.mock(com.crm.platform.segment.model.RuleNode.class);
+        when(ruleParser.parse(segment.getRules())).thenReturn(mockAst);
+
+        @SuppressWarnings("unchecked")
+        org.springframework.data.jpa.domain.Specification<com.crm.platform.customer.entity.Customer> mockSpec =
+                org.mockito.Mockito.mock(org.springframework.data.jpa.domain.Specification.class);
+        when(criteriaCompiler.compile(mockAst)).thenReturn(mockSpec);
+        when(customerRepository.count(mockSpec)).thenReturn(42L);
+
+        com.crm.platform.segment.dto.SegmentPreviewResponse preview = segmentService.previewSegment(100L);
+
+        assertThat(preview.getSegmentId()).isEqualTo(100L);
+        assertThat(preview.getSegmentName()).isEqualTo("Preview Seg");
+        assertThat(preview.getMatchedAudienceCount()).isEqualTo(42L);
+        assertThat(preview.getEvaluatedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("getSegmentMembers returns paginated customer DTOs")
+    void getSegmentMembers_Success() {
+        Segment segment = new Segment("Members Seg", "Desc", "{\"field\":\"city\",\"op\":\"EQUALS\",\"value\":\"Delhi\"}", testUser);
+        segment.setId(200L);
+        when(segmentRepository.findById(200L)).thenReturn(Optional.of(segment));
+
+        com.crm.platform.segment.model.RuleNode mockAst = org.mockito.Mockito.mock(com.crm.platform.segment.model.RuleNode.class);
+        when(ruleParser.parse(segment.getRules())).thenReturn(mockAst);
+
+        @SuppressWarnings("unchecked")
+        org.springframework.data.jpa.domain.Specification<com.crm.platform.customer.entity.Customer> mockSpec =
+                org.mockito.Mockito.mock(org.springframework.data.jpa.domain.Specification.class);
+        when(criteriaCompiler.compile(mockAst)).thenReturn(mockSpec);
+
+        com.crm.platform.customer.entity.Customer cust = new com.crm.platform.customer.entity.Customer();
+        cust.setId(10L);
+        cust.setFirstName("John");
+        cust.setLastName("Doe");
+        cust.setEmail("john@example.com");
+
+        Page<com.crm.platform.customer.entity.Customer> custPage = new PageImpl<>(Collections.singletonList(cust));
+        when(customerRepository.findAll(org.mockito.ArgumentMatchers.eq(mockSpec), any(PageRequest.class))).thenReturn(custPage);
+
+        com.crm.platform.customer.dto.CustomerResponseDto dto = new com.crm.platform.customer.dto.CustomerResponseDto();
+        dto.setId(10L);
+        dto.setEmail("john@example.com");
+        when(customerMapper.toDto(cust)).thenReturn(dto);
+
+        Page<com.crm.platform.customer.dto.CustomerResponseDto> members = segmentService.getSegmentMembers(200L, PageRequest.of(0, 10));
+
+        assertThat(members.getTotalElements()).isEqualTo(1);
+        assertThat(members.getContent().get(0).getEmail()).isEqualTo("john@example.com");
     }
 }

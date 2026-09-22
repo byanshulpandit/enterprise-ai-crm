@@ -51,6 +51,9 @@ public class SegmentControllerTest {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private com.crm.platform.customer.repository.CustomerRepository customerRepository;
+
     private User adminUser;
     private User marketerUser;
     private Segment existingSegment;
@@ -59,6 +62,7 @@ public class SegmentControllerTest {
     void setUp() {
         campaignRepository.deleteAll();
         segmentRepository.deleteAll();
+        customerRepository.deleteAll();
         userRepository.deleteAll();
 
         adminUser = new User("admin_tester", "admin_tester@crm.internal", "hash", RoleEnum.ROLE_ADMIN, Boolean.TRUE);
@@ -75,6 +79,7 @@ public class SegmentControllerTest {
     void tearDown() {
         campaignRepository.deleteAll();
         segmentRepository.deleteAll();
+        customerRepository.deleteAll();
         userRepository.deleteAll();
     }
 
@@ -310,5 +315,205 @@ public class SegmentControllerTest {
                 .andExpect(jsonPath("$.data", hasSize(1)))
                 .andExpect(jsonPath("$.metadata.pagination.totalElements", is(1)))
                 .andExpect(jsonPath("$.metadata.pagination.page", is(0)));
+    }
+
+    @Test
+    @WithMockUser(username = "marketer_tester", roles = {"MARKETER"})
+    @DisplayName("POST /api/v1/segments/{id}/preview returns 200 OK with matched audience count")
+    void previewSegment_AsMarketer_Returns200WithCount() throws Exception {
+        com.crm.platform.customer.entity.Customer activeCustomer = new com.crm.platform.customer.entity.Customer();
+        activeCustomer.setFirstName("Raj");
+        activeCustomer.setLastName("Kumar");
+        activeCustomer.setEmail("raj@crm.internal");
+        activeCustomer.setCity("Delhi");
+        activeCustomer.setTotalSpend(new java.math.BigDecimal("6000.00"));
+        activeCustomer.setVisitCount(3);
+        customerRepository.saveAndFlush(activeCustomer);
+
+        com.crm.platform.customer.entity.Customer softDeleted = new com.crm.platform.customer.entity.Customer();
+        softDeleted.setFirstName("Ghost");
+        softDeleted.setLastName("User");
+        softDeleted.setEmail("ghost@crm.internal");
+        softDeleted.setCity("Delhi");
+        softDeleted.setTotalSpend(new java.math.BigDecimal("9000.00"));
+        softDeleted.setVisitCount(5);
+        softDeleted.setDeletedAt(java.time.Instant.now());
+        customerRepository.saveAndFlush(softDeleted);
+
+        Segment validSegment = new Segment("Delhi Segment", "Desc",
+                "{\"field\":\"city\",\"op\":\"EQUALS\",\"value\":\"Delhi\"}", adminUser);
+        validSegment = segmentRepository.saveAndFlush(validSegment);
+
+        mockMvc.perform(post("/api/v1/segments/{id}/preview", validSegment.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.segmentId", is(validSegment.getId().intValue())))
+                .andExpect(jsonPath("$.data.segmentName", is("Delhi Segment")))
+                .andExpect(jsonPath("$.data.matchedAudienceCount", is(1)))
+                .andExpect(jsonPath("$.data.evaluatedAt", notNullValue()));
+    }
+
+    @Test
+    @WithMockUser(username = "admin_tester", roles = {"ADMIN"})
+    @DisplayName("POST /api/v1/segments/{id}/preview as ADMIN succeeds")
+    void previewSegment_AsAdmin_Returns200() throws Exception {
+        Segment validSegment = new Segment("Admin Seg", "Desc",
+                "{\"field\":\"city\",\"op\":\"EQUALS\",\"value\":\"Delhi\"}", adminUser);
+        validSegment = segmentRepository.saveAndFlush(validSegment);
+
+        mockMvc.perform(post("/api/v1/segments/{id}/preview", validSegment.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.matchedAudienceCount", is(0)));
+    }
+
+    @Test
+    @WithMockUser(username = "marketer_tester", roles = {"MARKETER"})
+    @DisplayName("POST /api/v1/segments/{id}/preview missing segment returns 404 Not Found")
+    void previewSegment_NotFound_Returns404() throws Exception {
+        mockMvc.perform(post("/api/v1/segments/{id}/preview", 99999L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code", is("RESOURCE_NOT_FOUND")));
+    }
+
+    @Test
+    @WithMockUser(username = "marketer_tester", roles = {"MARKETER"})
+    @DisplayName("POST /api/v1/segments/{id}/preview invalid rules returns 400 Bad Request")
+    void previewSegment_InvalidRules_Returns400() throws Exception {
+        Segment invalidSegment = new Segment("Invalid Seg", "Desc", "{\"invalid\":\"bad\"}", adminUser);
+        invalidSegment = segmentRepository.saveAndFlush(invalidSegment);
+
+        mockMvc.perform(post("/api/v1/segments/{id}/preview", invalidSegment.getId()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code", is("BAD_REQUEST")));
+    }
+
+    @Test
+    @WithMockUser(username = "marketer_tester", roles = {"MARKETER"})
+    @DisplayName("GET /api/v1/segments/{id}/members invalid rules returns 400 Bad Request")
+    void getSegmentMembers_InvalidRules_Returns400() throws Exception {
+        Segment invalidSegment = new Segment("Invalid Seg Members", "Desc", "{\"invalid\":\"bad\"}", adminUser);
+        invalidSegment = segmentRepository.saveAndFlush(invalidSegment);
+
+        mockMvc.perform(get("/api/v1/segments/{id}/members", invalidSegment.getId()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code", is("BAD_REQUEST")));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/segments/{id}/preview unauthenticated returns 401 Unauthorized")
+    void previewSegment_Unauthenticated_Returns401() throws Exception {
+        mockMvc.perform(post("/api/v1/segments/{id}/preview", existingSegment.getId()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code", is("UNAUTHORIZED")));
+    }
+
+    @Test
+    @WithMockUser(username = "marketer_tester", roles = {"MARKETER"})
+    @DisplayName("GET /api/v1/segments/{id}/members returns 200 OK with paginated members (excludes soft-deleted)")
+    void getSegmentMembers_Success_Returns200() throws Exception {
+        com.crm.platform.customer.entity.Customer activeCustomer = new com.crm.platform.customer.entity.Customer();
+        activeCustomer.setFirstName("Sunil");
+        activeCustomer.setLastName("Grover");
+        activeCustomer.setEmail("sunil@crm.internal");
+        activeCustomer.setCity("Mumbai");
+        activeCustomer.setTotalSpend(new java.math.BigDecimal("12000.00"));
+        activeCustomer.setVisitCount(4);
+        customerRepository.saveAndFlush(activeCustomer);
+
+        com.crm.platform.customer.entity.Customer softDeleted = new com.crm.platform.customer.entity.Customer();
+        softDeleted.setFirstName("Deleted");
+        softDeleted.setLastName("Person");
+        softDeleted.setEmail("deleted.person@crm.internal");
+        softDeleted.setCity("Mumbai");
+        softDeleted.setTotalSpend(new java.math.BigDecimal("15000.00"));
+        softDeleted.setVisitCount(6);
+        softDeleted.setDeletedAt(java.time.Instant.now());
+        customerRepository.saveAndFlush(softDeleted);
+
+        Segment validSegment = new Segment("Mumbai Members Seg", "Desc",
+                "{\"field\":\"city\",\"op\":\"EQUALS\",\"value\":\"Mumbai\"}", adminUser);
+        validSegment = segmentRepository.saveAndFlush(validSegment);
+
+        mockMvc.perform(get("/api/v1/segments/{id}/members?page=0&size=10", validSegment.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data", hasSize(1)))
+                .andExpect(jsonPath("$.data[0].email", is("sunil@crm.internal")))
+                .andExpect(jsonPath("$.metadata.pagination.totalElements", is(1)))
+                .andExpect(jsonPath("$.metadata.pagination.page", is(0)));
+    }
+
+    @Test
+    @WithMockUser(username = "marketer_tester", roles = {"MARKETER"})
+    @DisplayName("GET /api/v1/segments/{id}/members missing segment returns 404 Not Found")
+    void getSegmentMembers_NotFound_Returns404() throws Exception {
+        mockMvc.perform(get("/api/v1/segments/{id}/members", 99999L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code", is("RESOURCE_NOT_FOUND")));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/segments/{id}/members unauthenticated returns 401 Unauthorized")
+    void getSegmentMembers_Unauthenticated_Returns401() throws Exception {
+        mockMvc.perform(get("/api/v1/segments/{id}/members", existingSegment.getId()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code", is("UNAUTHORIZED")));
+    }
+
+    @Test
+    @WithMockUser(username = "marketer_tester", roles = {"MARKETER"})
+    @DisplayName("Verify preview count and members totalElements agree on live database state")
+    void previewCount_And_MembersTotalElements_Agree() throws Exception {
+        com.crm.platform.customer.entity.Customer c1 = new com.crm.platform.customer.entity.Customer();
+        c1.setFirstName("One");
+        c1.setLastName("User");
+        c1.setEmail("one@crm.internal");
+        c1.setCity("Pune");
+        c1.setTotalSpend(new java.math.BigDecimal("2000.00"));
+        c1.setVisitCount(2);
+        customerRepository.saveAndFlush(c1);
+
+        com.crm.platform.customer.entity.Customer c2 = new com.crm.platform.customer.entity.Customer();
+        c2.setFirstName("Two");
+        c2.setLastName("User");
+        c2.setEmail("two@crm.internal");
+        c2.setCity("Pune");
+        c2.setTotalSpend(new java.math.BigDecimal("3000.00"));
+        c2.setVisitCount(3);
+        customerRepository.saveAndFlush(c2);
+
+        Segment validSegment = new Segment("Pune Segment", "Desc",
+                "{\"field\":\"city\",\"op\":\"EQUALS\",\"value\":\"Pune\"}", adminUser);
+        validSegment = segmentRepository.saveAndFlush(validSegment);
+
+        // Preview count
+        mockMvc.perform(post("/api/v1/segments/{id}/preview", validSegment.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.matchedAudienceCount", is(2)));
+
+        // Members totalElements
+        mockMvc.perform(get("/api/v1/segments/{id}/members", validSegment.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", hasSize(2)))
+                .andExpect(jsonPath("$.metadata.pagination.totalElements", is(2)));
+    }
+
+    @Test
+    @WithMockUser(username = "guest_tester", roles = {"VIEWER"})
+    @DisplayName("POST /api/v1/segments/{id}/preview with unauthorized role returns 403 Forbidden")
+    void previewSegment_ForbiddenRole_Returns403() throws Exception {
+        mockMvc.perform(post("/api/v1/segments/{id}/preview", existingSegment.getId()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code", is("FORBIDDEN")));
+    }
+
+    @Test
+    @WithMockUser(username = "guest_tester", roles = {"VIEWER"})
+    @DisplayName("GET /api/v1/segments/{id}/members with unauthorized role returns 403 Forbidden")
+    void getSegmentMembers_ForbiddenRole_Returns403() throws Exception {
+        mockMvc.perform(get("/api/v1/segments/{id}/members", existingSegment.getId()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code", is("FORBIDDEN")));
     }
 }

@@ -472,7 +472,7 @@ Rules combine using **AND** (all conditions must match) or **OR** (any condition
 }
 ```
 
-> **[OPEN — Exact MySQL storage format (JSON column vs. normalised tables) will be decided during System Design.]**
+> **[RESOLVED (M6) — Stored as native MySQL JSON column `segments.rules`. Validated in-memory via typed Rule AST and compiled dynamically into JPA Criteria API predicates for database execution.]**
 
 ---
 

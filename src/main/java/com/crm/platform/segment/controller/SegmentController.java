@@ -4,6 +4,8 @@ import com.crm.platform.common.dto.ApiResponse;
 import com.crm.platform.common.dto.PageMetadata;
 import com.crm.platform.segment.dto.SegmentCreateRequest;
 import com.crm.platform.segment.dto.SegmentResponse;
+import com.crm.platform.customer.dto.CustomerResponseDto;
+import com.crm.platform.segment.dto.SegmentPreviewResponse;
 import com.crm.platform.segment.dto.SegmentUpdateRequest;
 import com.crm.platform.segment.entity.Segment;
 import com.crm.platform.segment.service.SegmentService;
@@ -79,5 +81,20 @@ public class SegmentController {
         List<SegmentResponse> dtos = page.getContent().stream().map(SegmentResponse::fromEntity).toList();
         PageMetadata pagination = PageMetadata.fromPage(page);
         return ResponseEntity.ok(ApiResponse.success(dtos, pagination));
+    }
+
+    @PostMapping("/{id}/preview")
+    public ResponseEntity<ApiResponse<SegmentPreviewResponse>> previewSegment(@PathVariable Long id) {
+        SegmentPreviewResponse preview = segmentService.previewSegment(id);
+        return ResponseEntity.ok(ApiResponse.success(preview));
+    }
+
+    @GetMapping("/{id}/members")
+    public ResponseEntity<ApiResponse<List<CustomerResponseDto>>> getSegmentMembers(
+            @PathVariable Long id,
+            @PageableDefault(page = 0, size = 20, sort = "id") Pageable pageable) {
+        Page<CustomerResponseDto> page = segmentService.getSegmentMembers(id, pageable);
+        PageMetadata pagination = PageMetadata.fromPage(page);
+        return ResponseEntity.ok(ApiResponse.success(page.getContent(), pagination));
     }
 }
