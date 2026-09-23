@@ -7,7 +7,9 @@ import com.crm.platform.campaign.entity.CampaignStatus;
 import com.crm.platform.campaign.repository.CampaignRepository;
 import com.crm.platform.campaign.service.CampaignServiceImpl;
 import com.crm.platform.common.exception.ConflictException;
+import com.crm.platform.common.exception.InvalidRequestException;
 import com.crm.platform.common.exception.ResourceNotFoundException;
+import com.crm.platform.customer.entity.Customer;
 import com.crm.platform.segment.entity.Segment;
 import com.crm.platform.segment.repository.SegmentRepository;
 import com.crm.platform.user.entity.RoleEnum;
@@ -45,13 +47,33 @@ public class CampaignServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private com.crm.platform.segment.service.SegmentService segmentService;
+
+    @Mock
+    private com.crm.platform.customer.repository.CustomerRepository customerRepository;
+
+    @Mock
+    private com.crm.platform.delivery.repository.CampaignDeliveryRecordRepository deliveryRecordRepository;
+
+    @Mock
+    private com.crm.platform.delivery.service.DeliveryStreamProducer deliveryStreamProducer;
+
     private CampaignServiceImpl campaignService;
     private User testUser;
     private Segment testSegment;
 
     @BeforeEach
     void setUp() {
-        campaignService = new CampaignServiceImpl(campaignRepository, segmentRepository, userRepository);
+        campaignService = new CampaignServiceImpl(
+                campaignRepository,
+                segmentRepository,
+                userRepository,
+                segmentService,
+                customerRepository,
+                deliveryRecordRepository,
+                deliveryStreamProducer
+        );
 
         testUser = new User("marketer_user", "marketer@crm.internal", "hash", RoleEnum.ROLE_MARKETER, Boolean.TRUE);
         testUser.setId(1L);
@@ -217,5 +239,82 @@ public class CampaignServiceTest {
 
         assertThat(result.getTotalElements()).isEqualTo(1);
         verify(campaignRepository).findByStatus(CampaignStatus.DRAFT, PageRequest.of(0, 10));
+    }
+
+    @Test
+    @DisplayName("launchCampaign successfully transitions DRAFT campaign to RUNNING and dispatches tasks")
+    void launchCampaign_Success() {
+        Campaign campaign = new Campaign("Flash Sale", "Desc", testSegment, "Hello {{firstName}}", testUser);
+        campaign.setId(100L);
+        campaign.setStatus(CampaignStatus.DRAFT);
+
+        Customer c1 = new Customer();
+        c1.setId(1L);
+        c1.setFirstName("Aarav");
+        c1.setLastName("Sharma");
+        c1.setEmail("aarav@crm.internal");
+
+        Customer c2 = new Customer();
+        c2.setId(2L);
+        c2.setFirstName("Diya");
+        c2.setLastName("Patel");
+        c2.setEmail("diya@crm.internal");
+
+        org.springframework.data.jpa.domain.Specification<Customer> dummySpec = (root, query, cb) -> null;
+
+        when(campaignRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(campaign));
+        when(segmentService.compileSegmentRules(testSegment.getId())).thenReturn(dummySpec);
+        when(customerRepository.findAll(dummySpec)).thenReturn(java.util.List.of(c1, c2));
+        when(campaignRepository.save(any(Campaign.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        com.crm.platform.campaign.dto.CampaignLaunchResponse response = campaignService.launchCampaign(100L);
+
+        assertThat(response).isNotNull();
+        assertThat(response.getCampaignId()).isEqualTo(100L);
+        assertThat(response.getStatus()).isEqualTo(CampaignStatus.RUNNING);
+        assertThat(response.getTargetAudienceSize()).isEqualTo(2);
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.RUNNING);
+        assertThat(campaign.getStartedAt()).isNotNull();
+
+        verify(deliveryRecordRepository).saveAll(any());
+        verify(deliveryStreamProducer).enqueueDeliveries(org.mockito.ArgumentMatchers.eq(100L), any());
+    }
+
+    @Test
+    @DisplayName("launchCampaign rejects when campaign is not in DRAFT status")
+    void launchCampaign_NonDraftStatus_ThrowsInvalidRequestException() {
+        Campaign campaign = new Campaign("Running Campaign", "Desc", testSegment, "Hello", testUser);
+        campaign.setId(101L);
+        campaign.setStatus(CampaignStatus.RUNNING);
+
+        when(campaignRepository.findByIdForUpdate(101L)).thenReturn(Optional.of(campaign));
+
+        assertThatThrownBy(() -> campaignService.launchCampaign(101L))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessageContaining("Only campaigns in DRAFT status can be launched. Current status: RUNNING");
+
+        verify(deliveryStreamProducer, never()).enqueueDeliveries(any(), any());
+    }
+
+    @Test
+    @DisplayName("launchCampaign rejects when target segment evaluates to zero audience")
+    void launchCampaign_ZeroAudience_RejectsAndRemainsDraft() {
+        Campaign campaign = new Campaign("Empty Audience Campaign", "Desc", testSegment, "Hello", testUser);
+        campaign.setId(102L);
+        campaign.setStatus(CampaignStatus.DRAFT);
+
+        org.springframework.data.jpa.domain.Specification<Customer> dummySpec = (root, query, cb) -> null;
+
+        when(campaignRepository.findByIdForUpdate(102L)).thenReturn(Optional.of(campaign));
+        when(segmentService.compileSegmentRules(testSegment.getId())).thenReturn(dummySpec);
+        when(customerRepository.findAll(dummySpec)).thenReturn(Collections.emptyList());
+
+        assertThatThrownBy(() -> campaignService.launchCampaign(102L))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessageContaining("Campaign launch rejected: Target segment evaluated to 0 matching active customers. Campaign remains in DRAFT.");
+
+        assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
+        verify(campaignRepository, never()).save(any());
+        verify(deliveryStreamProducer, never()).enqueueDeliveries(any(), any());
     }
 }

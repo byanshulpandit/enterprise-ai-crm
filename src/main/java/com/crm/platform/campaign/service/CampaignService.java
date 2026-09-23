@@ -18,4 +18,6 @@ public interface CampaignService {
     void deleteCampaign(Long id);
 
     Page<Campaign> listCampaigns(CampaignStatus status, Pageable pageable);
+
+    com.crm.platform.campaign.dto.CampaignLaunchResponse launchCampaign(Long id);
 }

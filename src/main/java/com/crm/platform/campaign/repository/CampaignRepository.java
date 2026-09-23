@@ -29,4 +29,8 @@ public interface CampaignRepository extends JpaRepository<Campaign, Long> {
     long countBySegmentId(Long segmentId);
 
     Optional<Campaign> findByName(String name);
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("SELECT c FROM Campaign c WHERE c.id = :id")
+    Optional<Campaign> findByIdForUpdate(@org.springframework.data.repository.query.Param("id") Long id);
 }

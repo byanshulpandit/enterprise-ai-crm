@@ -83,4 +83,10 @@ public class CampaignController {
         PageMetadata pagination = PageMetadata.fromPage(page);
         return ResponseEntity.ok(ApiResponse.success(dtos, pagination));
     }
+
+    @PostMapping("/{id}/launch")
+    public ResponseEntity<ApiResponse<com.crm.platform.campaign.dto.CampaignLaunchResponse>> launchCampaign(@PathVariable Long id) {
+        com.crm.platform.campaign.dto.CampaignLaunchResponse response = campaignService.launchCampaign(id);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
 }

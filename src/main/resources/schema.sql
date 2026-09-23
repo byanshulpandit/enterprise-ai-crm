@@ -91,3 +91,66 @@ CREATE TABLE IF NOT EXISTS campaigns (
     INDEX idx_camp_created_by (created_by)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- Milestone 7: Bulk Ingestion Domain Schema
+
+CREATE TABLE IF NOT EXISTS upload_history (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    uploaded_by BIGINT UNSIGNED NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    file_type VARCHAR(10) NOT NULL,
+    total_rows INT UNSIGNED NOT NULL DEFAULT 0,
+    success_count INT UNSIGNED NOT NULL DEFAULT 0,
+    failure_count INT UNSIGNED NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL,
+    error_details JSON NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+
+    CONSTRAINT fk_upload_user FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT chk_upload_file_type CHECK (file_type IN ('CSV', 'XLSX')),
+    CONSTRAINT chk_upload_status CHECK (status IN ('SUCCESS', 'PARTIAL_SUCCESS', 'FAILED')),
+    INDEX idx_upload_user (uploaded_by),
+    INDEX idx_upload_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Milestone 8 & 9: Campaign Delivery Records Schema
+
+CREATE TABLE IF NOT EXISTS campaign_delivery_records (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    campaign_id BIGINT UNSIGNED NOT NULL,
+    customer_id BIGINT UNSIGNED NOT NULL,
+    message TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    failure_reason VARCHAR(500) NULL,
+    processed_at DATETIME(6) NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+
+    CONSTRAINT fk_deliv_campaign FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT fk_deliv_customer FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT uq_campaign_customer UNIQUE (campaign_id, customer_id),
+    CONSTRAINT chk_deliv_status CHECK (status IN ('PENDING', 'SENT', 'FAILED')),
+    INDEX idx_deliv_cust_id (customer_id),
+    INDEX idx_deliv_camp_status (campaign_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Milestone 10: AI Auditing Domain Schema
+
+CREATE TABLE IF NOT EXISTS ai_segment_audits (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    prompt_text TEXT NOT NULL,
+    generated_rules JSON NOT NULL,
+    action_taken VARCHAR(20) NOT NULL,
+    segment_id BIGINT UNSIGNED NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+
+    CONSTRAINT fk_ai_audit_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT fk_ai_audit_segment FOREIGN KEY (segment_id) REFERENCES segments(id) ON DELETE SET NULL ON UPDATE RESTRICT,
+    CONSTRAINT chk_ai_audit_action CHECK (action_taken IN ('SAVED', 'DISCARDED')),
+    INDEX idx_ai_audit_user (user_id),
+    INDEX idx_ai_audit_segment (segment_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+

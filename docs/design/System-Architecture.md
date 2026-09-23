@@ -7,10 +7,10 @@
 - **Project Code:** CS-CRM-2026
 - **System Name:** Enterprise AI-CRM Platform
 - **Course / Context:** Advanced Java Programming & Enterprise Systems
-- **Document Version:** 1.0.1
-- **Status:** Baseline Architectural Specification (M4 Security Reconciled)
+- **Document Version:** 1.1.0
+- **Status:** Approved Architecture (M7-M12 Backend Implementation Complete)
 - **Author:** System Architecture & Engineering Team
-- **Date:** 2026-09-20
+- **Date:** 2026-09-23
 - **Primary Source of Truth:** [Software Requirements Specification (docs/SRS.md)](file:///c:/Users/ANSHUL%20GAUTAM/OneDrive/Desktop/CLG-CRM/docs/SRS.md)
 - **Target Audience:** Academic Evaluators, Software Architecture Reviewers, Backend Implementation Engineers, Technical Leads
 
@@ -637,3 +637,4 @@ stateDiagram-v2
 | :--- | :--- | :--- | :--- | :--- |
 | 1.0.0 | 2026-09-18 | System Architecture & Engineering Team | Initial System Architecture Document baseline. | Approved |
 | 1.0.1 | 2026-09-20 | System Architecture & Engineering Team | M4 Security Baseline Reconciliation: Removed stale AUDITOR role from AD-07 and Section 9.3; reaffirmed exactly two roles (ROLE_ADMIN > ROLE_MARKETER); documented live database role authority and is_active check; resolved OD-AUTH-001 and OD-AUTH-002 per frozen M4 security decisions. | Approved |
+| 1.1.0 | 2026-09-23 | System Architecture & Engineering Team | M7-M12 Implementation Complete: Finalized Redis Streams transient transport (`crm:campaign:deliveries:stream`), worker consumer loop (`crm:delivery:workers`), pessimistic locking on campaign launch, Spring AI Gemini client integration with AST parsing & auditing, reporting engine, MDC request tracing, and Docker deployment. | Approved |
