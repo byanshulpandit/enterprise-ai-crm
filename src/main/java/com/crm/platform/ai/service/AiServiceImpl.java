@@ -87,7 +87,8 @@ public class AiServiceImpl implements AiService {
             throw new UnprocessableEntityException("Malformed JSON rule tree returned: " + e.getMessage());
         }
 
-        return new AiRuleGenerationResponse(rawPrompt, ruleNode, true);
+        boolean isFallback = geminiClient.isLastGenerationFallback();
+        return new AiRuleGenerationResponse(rawPrompt, ruleNode, true, isFallback);
     }
 
     @Override

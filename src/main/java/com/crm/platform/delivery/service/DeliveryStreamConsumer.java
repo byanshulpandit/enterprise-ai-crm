@@ -11,11 +11,14 @@ import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.domain.Range;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer.StreamMessageListenerContainerOptions;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 
@@ -66,18 +69,26 @@ public class DeliveryStreamConsumer {
                     Consumer.from(consumerGroup, consumerName),
                     StreamOffset.create(streamKey, ReadOffset.lastConsumed()),
                     message -> {
+                        Map<String, String> value = message.getValue();
+                        String correlationId = value.get("correlationId");
                         try {
-                            Map<String, String> value = message.getValue();
+                            if (correlationId != null && !correlationId.isBlank()) {
+                                org.slf4j.MDC.put("requestId", correlationId);
+                            }
                             String campIdStr = value.get("campaignId");
                             String custIdStr = value.get("customerId");
                             if (campIdStr != null && custIdStr != null) {
                                 Long campaignId = Long.parseLong(campIdStr);
                                 Long customerId = Long.parseLong(custIdStr);
-                                deliveryWorkerService.processDelivery(campaignId, customerId);
+                                boolean processed = deliveryWorkerService.processDelivery(campaignId, customerId);
+                                if (processed) {
+                                    redisTemplate.opsForStream().acknowledge(streamKey, consumerGroup, message.getId());
+                                }
                             }
-                            redisTemplate.opsForStream().acknowledge(streamKey, consumerGroup, message.getId());
                         } catch (Exception e) {
                             log.error("Failed to process delivery stream message id={}", message.getId(), e);
+                        } finally {
+                            org.slf4j.MDC.remove("requestId");
                         }
                     }
             );
@@ -97,6 +108,73 @@ public class DeliveryStreamConsumer {
         } catch (Exception e) {
             // Group may already exist (BUSYGROUP) or stream not yet initialized
             log.debug("Consumer group {} already exists or could not be created: {}", consumerGroup, e.getMessage());
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${crm.async.pel-recovery-interval-ms:15000}")
+    public int recoverStalePendingMessages() {
+        try {
+            org.springframework.data.redis.connection.stream.PendingMessages pendingMessages =
+                    redisTemplate.opsForStream().pending(
+                            streamKey,
+                            consumerGroup,
+                            org.springframework.data.domain.Range.unbounded(),
+                            50
+                    );
+
+            if (pendingMessages == null || pendingMessages.isEmpty()) {
+                return 0;
+            }
+
+            long staleThresholdMs = 30000; // 30 seconds
+            int recoveredCount = 0;
+
+            for (org.springframework.data.redis.connection.stream.PendingMessage pm : pendingMessages) {
+                if (pm.getElapsedTimeSinceLastDelivery() != null &&
+                        pm.getElapsedTimeSinceLastDelivery().toMillis() >= staleThresholdMs) {
+                    
+                    List<?> rawRecords = redisTemplate.opsForStream().range(
+                            streamKey,
+                            org.springframework.data.domain.Range.closed(pm.getIdAsString(), pm.getIdAsString())
+                    );
+
+                    if (rawRecords != null && !rawRecords.isEmpty()) {
+                        MapRecord<?, ?, ?> record = (MapRecord<?, ?, ?>) rawRecords.get(0);
+                        Map<?, ?> value = record.getValue();
+                        String campIdStr = value.get("campaignId") != null ? value.get("campaignId").toString() : null;
+                        String custIdStr = value.get("customerId") != null ? value.get("customerId").toString() : null;
+                        String correlationId = value.get("correlationId") != null ? value.get("correlationId").toString() : null;
+
+                        if (campIdStr != null && custIdStr != null) {
+                            try {
+                                if (correlationId != null && !correlationId.isBlank()) {
+                                    org.slf4j.MDC.put("requestId", correlationId);
+                                }
+                                Long campaignId = Long.parseLong(campIdStr);
+                                Long customerId = Long.parseLong(custIdStr);
+                                boolean processed = deliveryWorkerService.processDelivery(campaignId, customerId);
+                                if (processed) {
+                                    redisTemplate.opsForStream().acknowledge(streamKey, consumerGroup, pm.getId());
+                                    recoveredCount++;
+                                }
+                            } finally {
+                                org.slf4j.MDC.remove("requestId");
+                            }
+                        }
+                    } else {
+                        // Message trimmed or absent; acknowledge to release pending entry
+                        redisTemplate.opsForStream().acknowledge(streamKey, consumerGroup, pm.getId());
+                    }
+                }
+            }
+
+            if (recoveredCount > 0) {
+                log.info("Recovered and processed {} stale PEL messages from consumer group {}", recoveredCount, consumerGroup);
+            }
+            return recoveredCount;
+        } catch (Exception e) {
+            log.debug("PEL recovery check skipped: {}", e.getMessage());
+            return 0;
         }
     }
 

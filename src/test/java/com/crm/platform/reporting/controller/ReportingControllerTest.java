@@ -39,10 +39,16 @@ public class ReportingControllerTest {
     @Autowired
     private CampaignRepository campaignRepository;
 
+    @org.springframework.boot.test.mock.mockito.MockBean
+    private com.crm.platform.ai.client.GeminiClient geminiClient;
+
     private Campaign testCampaign;
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.when(geminiClient.generateCampaignSummary(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn("Executive AI Campaign Summary: Delivery demonstrated high reliability.");
+
         User marketer = userRepository.findByUsername("marketer_report_test").orElseGet(() -> {
             User u = new User("marketer_report_test", "marketer_report_test@crm.internal", "$2a$12$hash", RoleEnum.ROLE_MARKETER);
             return userRepository.save(u);

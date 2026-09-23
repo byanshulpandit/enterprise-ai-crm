@@ -281,7 +281,7 @@ flowchart TD
     N --> O[Return Segment Preview Count or Customer ID Set]
 ```
 
-### 5.3 Pipeline 3: Campaign Dispatch & Asynchronous Message Processing
+### 5.3 Pipeline 3: Campaign Dispatch & Asynchronous Message Processing (Transactional Outbox)
 
 ```mermaid
 sequenceDiagram
@@ -289,51 +289,59 @@ sequenceDiagram
     actor Marketer as Marketer / User
     participant CampService as CampaignService
     participant SegEngine as SegmentationQueryEngine
-    participant RedisProducer as RedisStreamProducer
+    participant Outbox as CampaignDeliveryOutbox
+    participant DB as MySQL 8.x (Source of Truth)
+    participant Publisher as DeliveryOutboxPublisher
     participant Redis as Redis 7.x Stream
-    participant Consumer as CampaignStreamConsumer
-    participant WorkerPool as Spring ThreadPoolTaskExecutor
-    participant AI as AI Personalization / Fallback Engine
-    participant DB as MySQL 8.x
+    participant Consumer as DeliveryStreamConsumer
+    participant Worker as DeliveryWorkerService
+    participant Provider as DeliveryProvider (Idempotent)
 
-    Marketer->>CampService: POST /api/v1/campaigns/{id}/dispatch
+    Marketer->>CampService: POST /api/v1/campaigns/{id}/launch
     activate CampService
-    CampService->>DB: Verify Status == DRAFT & Acquire Row Lock
-    CampService->>DB: UPDATE campaigns SET status = 'RUNNING', started_at = NOW()
-    CampService->>SegEngine: Evaluate Audience (Segment Rule Tree)
-    SegEngine->>DB: Stream Matching Customer IDs
-    DB-->>SegEngine: Customer ID Stream
+    CampService->>DB: Lock Campaign Row (SELECT FOR UPDATE)
+    CampService->>CampService: Assert Status == DRAFT & Evaluate Audience Count
+    CampService->>DB: Transition status = 'RUNNING', started_at = NOW()
     
-    loop Batch of Customer IDs
-        CampService->>RedisProducer: Enqueue Task {campaignId, customerId}
-        RedisProducer->>Redis: XADD crm:stream:campaign-dispatch * payload
+    loop Bounded Batches (500 per page)
+        CampService->>DB: Insert PENDING campaign_delivery_records
+        CampService->>DB: Stage PENDING campaign_delivery_outbox events (Same MySQL TX)
     end
-    CampService-->>Marketer: 202 Accepted (Campaign RUNNING, Total Dispatched)
+    CampService->>DB: COMMIT TRANSACTION
+    CampService->>Publisher: Trigger Async Immediate Outbox Publish
+    CampService-->>Marketer: 200 OK (Campaign launched, status=RUNNING)
     deactivate CampService
+
+    activate Publisher
+    Publisher->>DB: Fetch PENDING outbox records in batches
+    loop For each outbox event
+        Publisher->>Redis: XADD crm:campaign:deliveries:stream (payload + correlationId)
+        Publisher->>DB: Mark Outbox PUBLISHED (published_at = NOW())
+    end
+    Publisher->>Redis: Safe Trim Stream (MINID / MAXLEN approximate)
+    deactivate Publisher
 
     activate Consumer
     loop Continuously Read Consumer Group
-        Consumer->>Redis: XREADGROUP GROUP crm-workers worker-1 COUNT 50 BLOCK 2000
-        Redis-->>Consumer: List of Stream Messages
-        Consumer->>WorkerPool: Submit Batch Processing Task
-        activate WorkerPool
+        Consumer->>Redis: XREADGROUP crm:delivery:workers worker-1
+        Redis-->>Consumer: Stream Messages
+        Consumer->>Consumer: Restore correlationId to SLF4J MDC
+        Consumer->>Worker: processDelivery(deliveryId, campaignId, ...)
+        activate Worker
         
-        WorkerPool->>DB: Check Message Delivery Record (Idempotency Check)
-        alt Already in Terminal State (SENT/FAILED)
-            WorkerPool->>Redis: XACK crm:stream:campaign-dispatch crm-workers msgId
-        else Not Processed
-            WorkerPool->>AI: Generate Context-Aware Personalization
-            alt AI Success
-                AI-->>WorkerPool: Personalized Message Body
-            else AI Failure / Timeout
-                WorkerPool->>WorkerPool: Execute Fallback Template Engine
-            end
-            
-            WorkerPool->>WorkerPool: Simulate / Invoke Delivery Gateway
-            WorkerPool->>DB: INSERT/UPDATE delivery_records (status='SENT', delivered_at=NOW())
-            WorkerPool->>Redis: XACK crm:stream:campaign-dispatch crm-workers msgId
+        Worker->>DB: Check Delivery Record Status
+        alt Already Terminal (SENT or FAILED)
+            Worker-->>Consumer: Return (Idempotent bypass)
+        else PENDING
+            Worker->>Provider: send(DeliveryRequest with deterministic IdempotencyKey)
+            activate Provider
+            Provider-->>Worker: DeliveryResult (SUCCESS / FAILED)
+            deactivate Provider
+            Worker->>DB: Update delivery record (SENT/FAILED, processed_at = NOW())
         end
-        deactivate WorkerPool
+        deactivate Worker
+        Consumer->>Redis: XACK crm:campaign:deliveries:stream crm:delivery:workers msgId
+        Consumer->>Consumer: Clear SLF4J MDC
     end
     deactivate Consumer
 ```
@@ -407,15 +415,15 @@ To satisfy the strict requirement that **MySQL is the sole source of truth** whi
 
 ### 6.1 State Reconciliation Rules
 1. **First-Time Processing:**
-   - Message consumed $\to$ Delivery attempted $\to$ MySQL `campaign_delivery_records` updated to `SENT` or `FAILED` $\to$ `XACK` executed.
+   - Outbox publishes to Redis $\to$ Message consumed $\to$ `DeliveryProvider` executes with stable idempotency key $\to$ MySQL `campaign_delivery_records` updated to `SENT` or `FAILED` $\to$ `XACK` executed.
 2. **Redelivery / Worker Crash Recovery:**
-   - On worker recovery, messages lingering in the Pending Entries List (PEL) are reclaimed via `XAUTOCLAIM`.
-   - Before executing downstream delivery, the worker queries `campaign_delivery_records` in MySQL by unique constraint `(campaign_id, customer_id)`.
+   - On worker recovery or consumer crash, messages lingering in the Pending Entries List (PEL) are swept via scheduled `recoverStalePendingMessages()`.
+   - Before executing downstream delivery, the worker checks `campaign_delivery_records` in MySQL by unique constraint `(campaign_id, customer_id)`.
    - If a record already exists with terminal status (`SENT` or `FAILED`), duplicate processing is skipped, and the message is immediately acknowledged via `XACK`.
-3. **Incomplete or Failed Processing:**
-   - If processing throws an unhandled exception before MySQL commits, `XACK` is **never issued**.
-   - The message remains in the PEL and is re-read on subsequent schedule sweeps.
-   - If failure persists beyond `MAX_RETRY_ATTEMPTS = 3`, the worker writes a `FAILED` record to MySQL with error diagnostics, publishes the message to a Dead Letter Queue (`crm:stream:dead-letter`), and executes `XACK` on the primary stream.
+3. **External Provider Idempotency:**
+   - `DeliveryProvider` receives a deterministic idempotency key (`delivery-{id}`). Retried sends are recognized by the provider and deduplicated atomically.
+4. **Stream Retention & Bounded Growth:**
+   - Redis Streams are safely trimmed using approximate trimming (`opsForStream().trim(streamKey, maxStreamLength, true)`) ensuring memory bounds while preserving pending unacknowledged entries.
 
 ---
 

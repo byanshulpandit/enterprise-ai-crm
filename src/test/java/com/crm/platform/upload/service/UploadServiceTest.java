@@ -71,7 +71,7 @@ class UploadServiceTest {
     @DisplayName("Should successfully process valid CSV file and record history with SUCCESS status")
     void testProcessValidCsvSuccess() throws Exception {
         when(userRepository.findByUsername("marketer1")).thenReturn(Optional.of(testUser));
-        when(customerRepository.existsByEmail(any())).thenReturn(false);
+        when(customerRepository.findByEmail(any())).thenReturn(Optional.empty());
 
         when(uploadHistoryRepository.save(any(UploadHistory.class))).thenAnswer(inv -> {
             UploadHistory h = inv.getArgument(0);
@@ -108,9 +108,12 @@ class UploadServiceTest {
     @Test
     @DisplayName("Should process partial success when file contains duplicate and invalid rows")
     void testProcessPartialSuccess() throws Exception {
+        Customer existing = new Customer();
+        existing.setEmail("existing@example.com");
+
         when(userRepository.findByUsername("marketer1")).thenReturn(Optional.of(testUser));
-        when(customerRepository.existsByEmail("existing@example.com")).thenReturn(true);
-        when(customerRepository.existsByEmail("valid@example.com")).thenReturn(false);
+        when(customerRepository.findByEmail("existing@example.com")).thenReturn(Optional.of(existing));
+        when(customerRepository.findByEmail("valid@example.com")).thenReturn(Optional.empty());
 
         when(uploadHistoryRepository.save(any(UploadHistory.class))).thenAnswer(inv -> {
             UploadHistory h = inv.getArgument(0);

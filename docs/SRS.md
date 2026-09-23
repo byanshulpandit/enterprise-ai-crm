@@ -1240,7 +1240,9 @@ The following features are explicitly **excluded** from scope. Any requests to i
 | 1.0.1   | 2026-09-18 | Engineering Team | Scope-consistency corrections: Multi-Tenancy, Campaign Scheduling, Frontend | Approved |
 | 1.0.2   | 2026-09-20 | Engineering Team | M4 Security Baseline Reconciliation: Resolved OD-03 (1h token lifetime, no refresh tokens) and OD-08 (password policy 8-72 chars / 72 UTF-8 bytes, BCrypt strength 12) per frozen Security Baseline. | Approved |
 | 1.1.0   | 2026-09-23 | Engineering Team | M7-M12 Backend Completion: Streaming bulk upload (CSV/XLSX), Redis Streams delivery queue, concurrent campaign launch with pessimistic write locks, Spring AI Gemini natural language segment rule generation & narrative summaries, comprehensive reporting APIs, SLF4J/MDC request tracing, OpenAPI documentation, and production Docker containerization verified with 340 tests. | Approved |
+| 1.2.0   | 2026-09-24 | Engineering Team | Backend Hardening Pass: Transactional Outbox pattern (`campaign_delivery_outbox`) for MySQL ↔ Redis atomicity, Redis Streams PEL stale message recovery & safe MINID trimming, DeliveryProvider abstraction with deterministic idempotency keys, deterministic email uniqueness & soft-delete duplicate rejection semantics, chunked audience materialization (500/page), AI fallback indicators (`isFallback`) & strict 503 unavailability for campaign narrative summaries, asynchronous correlation ID propagation via SLF4J MDC, database query index optimizations, and expanded test suite to 352 passing tests (0 failures, 0 errors, 0 skipped). | Approved |
 
 ---
 
-*End of Software Requirements Specification — CS-CRM-2026 v1.1.0*
+*End of Software Requirements Specification — CS-CRM-2026 v1.2.0*
+

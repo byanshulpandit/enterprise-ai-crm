@@ -57,6 +57,9 @@ crm:
     batch-size: 20
     poll-timeout-ms: 2000
     worker-threads: 4
+    max-stream-length: ${CRM_MAX_STREAM_LENGTH:10000}
+    outbox-poll-interval-ms: ${CRM_OUTBOX_POLL_INTERVAL_MS:2000}
+    pel-recovery-interval-ms: ${CRM_PEL_RECOVERY_INTERVAL_MS:15000}
   pagination:
     default-size: 20
     max-size: 100
@@ -66,7 +69,8 @@ crm:
     gemini:
       api-key: ${GEMINI_API_KEY:}
       model: ${GEMINI_MODEL:gemini-1.5-flash}
-      timeout-ms: ${GEMINI_TIMEOUT_MS:5000}
+      connect-timeout-ms: ${GEMINI_CONNECT_TIMEOUT_MS:3000}
+      read-timeout-ms: ${GEMINI_READ_TIMEOUT_MS:7000}
 
 management:
   endpoints:

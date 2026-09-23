@@ -41,6 +41,8 @@ public class CampaignServiceImpl implements CampaignService {
     private final CustomerRepository customerRepository;
     private final CampaignDeliveryRecordRepository deliveryRecordRepository;
     private final DeliveryStreamProducer deliveryStreamProducer;
+    private final com.crm.platform.delivery.repository.CampaignDeliveryOutboxRepository outboxRepository;
+    private final com.crm.platform.delivery.service.DeliveryOutboxPublisher outboxPublisher;
 
     public CampaignServiceImpl(CampaignRepository campaignRepository,
                                SegmentRepository segmentRepository,
@@ -48,7 +50,9 @@ public class CampaignServiceImpl implements CampaignService {
                                SegmentService segmentService,
                                CustomerRepository customerRepository,
                                CampaignDeliveryRecordRepository deliveryRecordRepository,
-                               DeliveryStreamProducer deliveryStreamProducer) {
+                               DeliveryStreamProducer deliveryStreamProducer,
+                               com.crm.platform.delivery.repository.CampaignDeliveryOutboxRepository outboxRepository,
+                               com.crm.platform.delivery.service.DeliveryOutboxPublisher outboxPublisher) {
         this.campaignRepository = campaignRepository;
         this.segmentRepository = segmentRepository;
         this.userRepository = userRepository;
@@ -56,6 +60,8 @@ public class CampaignServiceImpl implements CampaignService {
         this.customerRepository = customerRepository;
         this.deliveryRecordRepository = deliveryRecordRepository;
         this.deliveryStreamProducer = deliveryStreamProducer;
+        this.outboxRepository = outboxRepository;
+        this.outboxPublisher = outboxPublisher;
     }
 
     @Override
@@ -157,9 +163,9 @@ public class CampaignServiceImpl implements CampaignService {
         }
 
         Specification<Customer> spec = segmentService.compileSegmentRules(campaign.getSegment().getId());
-        List<Customer> audience = customerRepository.findAll(spec);
+        long totalAudienceCount = customerRepository.count(spec);
 
-        if (audience.isEmpty()) {
+        if (totalAudienceCount == 0) {
             throw new InvalidRequestException("Campaign launch rejected: Target segment evaluated to 0 matching active customers. Campaign remains in DRAFT.");
         }
 
@@ -168,21 +174,70 @@ public class CampaignServiceImpl implements CampaignService {
         campaign.setStartedAt(now);
         campaignRepository.save(campaign);
 
-        List<CampaignDeliveryRecord> records = new ArrayList<>(audience.size());
-        List<Long> customerIds = new ArrayList<>(audience.size());
-        for (Customer customer : audience) {
-            String renderedMessage = MessageTemplateRenderer.render(campaign.getMessageTemplate(), customer);
-            records.add(new CampaignDeliveryRecord(campaign, customer, renderedMessage));
-            customerIds.add(customer.getId());
+        String correlationId = org.slf4j.MDC.get("requestId");
+        if (correlationId == null || correlationId.isBlank()) {
+            correlationId = java.util.UUID.randomUUID().toString();
         }
-        deliveryRecordRepository.saveAll(records);
 
-        deliveryStreamProducer.enqueueDeliveries(campaign.getId(), customerIds);
+        // Bounded audience materialization in batches of 500
+        int pageSize = 500;
+        int pageIndex = 0;
+        int totalMaterialized = 0;
+
+        while (true) {
+            org.springframework.data.domain.Pageable pageable =
+                    org.springframework.data.domain.PageRequest.of(pageIndex, pageSize, org.springframework.data.domain.Sort.by("id").ascending());
+            Page<Customer> customerPage = customerRepository.findAll(spec, pageable);
+
+            if (customerPage.isEmpty()) {
+                break;
+            }
+
+            List<CampaignDeliveryRecord> records = new ArrayList<>(customerPage.getNumberOfElements());
+            for (Customer customer : customerPage.getContent()) {
+                String renderedMessage = MessageTemplateRenderer.render(campaign.getMessageTemplate(), customer);
+                records.add(new CampaignDeliveryRecord(campaign, customer, renderedMessage));
+            }
+            List<CampaignDeliveryRecord> savedRecords = deliveryRecordRepository.saveAll(records);
+
+            // Persist outbox records in the exact same MySQL transaction
+            List<com.crm.platform.delivery.entity.CampaignDeliveryOutbox> outboxBatch = new ArrayList<>(savedRecords.size());
+            for (CampaignDeliveryRecord saved : savedRecords) {
+                outboxBatch.add(new com.crm.platform.delivery.entity.CampaignDeliveryOutbox(
+                        campaign.getId(),
+                        saved.getCustomer().getId(),
+                        saved.getId(),
+                        correlationId
+                ));
+            }
+            outboxRepository.saveAll(outboxBatch);
+
+            totalMaterialized += savedRecords.size();
+
+            if (!customerPage.hasNext()) {
+                break;
+            }
+            pageIndex++;
+        }
+
+        // Trigger immediate outbox publication after MySQL commit
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            outboxPublisher.triggerImmediatePublish();
+                        }
+                    }
+            );
+        } else {
+            outboxPublisher.triggerImmediatePublish();
+        }
 
         return new CampaignLaunchResponse(
                 campaign.getId(),
                 CampaignStatus.RUNNING,
-                audience.size(),
+                totalMaterialized,
                 "Campaign transitioned to RUNNING and delivery processing has been initiated.",
                 now
         );

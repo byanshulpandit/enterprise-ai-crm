@@ -1088,14 +1088,15 @@ The system defines exactly **two canonical roles** (`docs/SRS.md` §3.1):
           }
         ]
       },
-      "isValidated": true
+      "isValidated": true,
+      "isFallback": false
     }
   }
   ```
 - **Failure Status Codes:**
   - `400 Bad Request`: Prompt is empty or malformed.
   - `422 Unprocessable Entity`: Gemini returned an unparseable or logically illegal rule tree failing AST validation.
-  - `503 Service Unavailable`: Google Gemini API is unreachable, timed out, or rate-limited.
+  - `503 Service Unavailable`: Google Gemini API is unreachable, timed out, or rate-limited and deterministic fallback could not satisfy the prompt.
 
 ---
 

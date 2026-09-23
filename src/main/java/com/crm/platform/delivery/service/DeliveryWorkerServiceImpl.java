@@ -24,12 +24,15 @@ public class DeliveryWorkerServiceImpl implements DeliveryWorkerService {
 
     private final CampaignDeliveryRecordRepository deliveryRecordRepository;
     private final CampaignRepository campaignRepository;
+    private final com.crm.platform.delivery.provider.DeliveryProvider deliveryProvider;
 
     public DeliveryWorkerServiceImpl(
             CampaignDeliveryRecordRepository deliveryRecordRepository,
-            CampaignRepository campaignRepository) {
+            CampaignRepository campaignRepository,
+            com.crm.platform.delivery.provider.DeliveryProvider deliveryProvider) {
         this.deliveryRecordRepository = deliveryRecordRepository;
         this.campaignRepository = campaignRepository;
+        this.deliveryProvider = deliveryProvider;
     }
 
     @Override
@@ -52,17 +55,26 @@ public class DeliveryWorkerServiceImpl implements DeliveryWorkerService {
                 return true;
             }
 
-            // Simulate external delivery channel: 90% success, 10% failure
-            boolean success = RANDOM.nextInt(100) < 90;
-            DeliveryStatus newStatus = success ? DeliveryStatus.SENT : DeliveryStatus.FAILED;
-            String failureReason = success ? null : "Simulated downstream delivery failure: network timeout";
+            String idempotencyKey = "CAMP-" + campaignId + "-CUST-" + customerId;
+            String recipientEmail = (record.getCustomer() != null) ? record.getCustomer().getEmail() : "customer-" + customerId + "@example.com";
+            com.crm.platform.delivery.provider.DeliveryRequest request = new com.crm.platform.delivery.provider.DeliveryRequest(
+                    idempotencyKey,
+                    campaignId,
+                    customerId,
+                    recipientEmail,
+                    record.getMessage()
+            );
+
+            com.crm.platform.delivery.provider.DeliveryResult result = deliveryProvider.send(request);
+            DeliveryStatus newStatus = result.isSuccess() ? DeliveryStatus.SENT : DeliveryStatus.FAILED;
+            String failureReason = result.isSuccess() ? null : result.getFailureReason();
 
             int rowsUpdated = deliveryRecordRepository.updateStatusIfPending(
                     campaignId,
                     customerId,
                     newStatus,
                     failureReason,
-                    Instant.now()
+                    result.getProcessedAt() != null ? result.getProcessedAt() : Instant.now()
             );
 
             if (rowsUpdated > 0) {

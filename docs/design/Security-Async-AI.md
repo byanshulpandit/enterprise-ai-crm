@@ -447,18 +447,19 @@ In a system without distributed transactions or two-phase commit (2PC), a failur
 - **MySQL as the Authoritative Source of Truth:** `PENDING` records in `campaign_delivery_records` are authoritative persistent delivery obligations. If Redis messages are lost, the obligations remain intact in MySQL.
 - **Post-Commit Failure Boundary:** Once the MySQL transaction commits, a subsequent Redis enqueue failure **cannot** roll back the database state. The campaign remains `RUNNING` with `PENDING` obligations.
 
-### 14.3 Candidate Reconciliation Options (`ODD-ASYNC-02`)
-The exact mechanism to ensure un-enqueued `PENDING` obligations are processed through Redis remains an **`[OPEN DESIGN DECISION / DEFERRED]`**. Three candidate approaches are under consideration:
-- **Candidate A (Synchronous In-Request Enqueue):** Enqueue all tasks within the launch HTTP request thread prior to returning `200 OK`. Simplifies recovery but degrades API latency on large audiences.
-- **Candidate B (Asynchronous Background Reconciliation Scanner):** An in-process scheduled component scans MySQL for `RUNNING` campaigns with orphaned `PENDING` records and re-enqueues them into Redis.
-- **Candidate C (Event-Driven / In-Process Dispatcher Component):** An in-process application event listener decouples the HTTP thread from the enqueue loop. *Boundary Rule:* This candidate does not imply a separate microservice and must remain strictly within the approved modular-monolith architecture.
+### 14.3 Formal Resolution: Transactional Outbox Architecture (Hardening #1)
+The post-commit enqueue gap is resolved by implementing the **Transactional Outbox Pattern**:
+1. Within the **same MySQL transaction** that locks the campaign and inserts `campaign_delivery_records`, the system writes corresponding staging records into `campaign_delivery_outbox` (status = `PENDING`).
+2. When the transaction commits, both the campaign state, delivery records, and outbox events are guaranteed to be atomically durable.
+3. An asynchronous `DeliveryOutboxPublisher` polls unpublished outbox records in bounded batches, dispatches them to Redis Streams via `XADD`, and marks the outbox status as `PUBLISHED` (`published_at = NOW()`).
+4. In the event of a Redis outage or process crash, outbox records remain safely in MySQL and are retried with exponential backoff on subsequent poller runs.
 
 ---
 
 ## 15. Delivery Idempotency and At-Least-Once Semantics
 
 ### 15.1 Architectural Delivery Model
-The platform operates strictly with **At-Least-Once Delivery Semantics**. The platform does **NOT** provide end-to-end exactly-once processing.
+The platform operates strictly with **At-Least-Once Delivery Semantics**. The platform does **NOT** claim end-to-end exactly-once external delivery, but guarantees deterministic state-machine idempotency and external provider deduplication.
 
 ### 15.2 The Four Idempotency Layers
 
@@ -480,17 +481,16 @@ The platform operates strictly with **At-Least-Once Delivery Semantics**. The pl
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
                                             │
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
-│ Layer 3: Message Redelivery (Redis Transport Level)                                    │
-│ - Worker crashes or timeouts trigger message redelivery via PEL re-reading.            │
+│ Layer 3: Message Redelivery & PEL Recovery (Redis Transport Level)                     │
+│ - Worker crashes or timeouts trigger message redelivery via PEL recovery.              │
 │ - Redelivered tasks are handled gracefully by checking Layer 2 conditional updates.    │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
                                             │
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
-│ Layer 4: Simulated Side-Effect Execution (Channel Level)                               │
-│ - Under at-least-once semantics, if a worker executes simulated delivery but crashes   │
-│   before executing the MySQL update, a redelivered task will re-execute simulation.    │
-│ - INVARIANT: The conditional MySQL update protects the persistent state transition;    │
-│   it does NOT guarantee exactly-once execution of the simulated delivery side effect. │
+│ Layer 4: External Delivery Provider Abstraction (Channel Level - Hardening #4 & #11)   │
+│ - DeliveryProvider abstraction with stable, deterministic idempotency key (deliv-{id}) │
+│ - SimulatedDeliveryProvider deduplicates concurrent/repeated calls atomically.         │
+│ - Retries reuse the exact same idempotency key without initiating duplicate sends.     │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 

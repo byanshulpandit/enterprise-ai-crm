@@ -30,18 +30,24 @@ public class DefaultGeminiClient implements GeminiClient {
     private final String model;
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
+    private final java.util.concurrent.atomic.AtomicBoolean lastGenerationFallback = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     public DefaultGeminiClient(
             @Value("${gemini.api-key:${GEMINI_API_KEY:}}") String apiKey,
             @Value("${gemini.model:gemini-1.5-flash}") String model,
+            @Value("${crm.ai.gemini.connect-timeout-ms:3000}") long connectTimeoutMs,
+            @Value("${crm.ai.gemini.read-timeout-ms:7000}") long readTimeoutMs,
             ObjectMapper objectMapper) {
         this.apiKey = (apiKey != null) ? apiKey.trim() : "";
         this.model = model;
         this.objectMapper = objectMapper;
 
+        long safeConnectTimeout = Math.max(500, Math.min(60000, connectTimeoutMs));
+        long safeReadTimeout = Math.max(500, Math.min(120000, readTimeoutMs));
+
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(Duration.ofSeconds(3));
-        requestFactory.setReadTimeout(Duration.ofSeconds(5));
+        requestFactory.setConnectTimeout(Duration.ofMillis(safeConnectTimeout));
+        requestFactory.setReadTimeout(Duration.ofMillis(safeReadTimeout));
 
         this.restClient = RestClient.builder()
                 .requestFactory(requestFactory)
@@ -49,8 +55,14 @@ public class DefaultGeminiClient implements GeminiClient {
     }
 
     @Override
+    public boolean isLastGenerationFallback() {
+        return lastGenerationFallback.get();
+    }
+
+    @Override
     public String generateSegmentRulesJson(String naturalLanguagePrompt) {
         if (apiKey.isEmpty()) {
+            lastGenerationFallback.set(true);
             return generateDeterministicSegmentRules(naturalLanguagePrompt);
         }
 
@@ -76,12 +88,15 @@ public class DefaultGeminiClient implements GeminiClient {
                     .retrieve()
                     .body(String.class);
 
+            lastGenerationFallback.set(false);
             return extractJsonFromGeminiResponse(response);
         } catch (ResourceAccessException e) {
-            log.error("Gemini API connection timed out or unreachable", e);
-            throw new ServiceUnavailableException("Google Gemini AI API is unreachable or timed out", e);
+            log.warn("Gemini API connection timed out or unreachable: {}. Falling back to deterministic translation.", e.getMessage());
+            lastGenerationFallback.set(true);
+            return generateDeterministicSegmentRules(naturalLanguagePrompt);
         } catch (Exception e) {
             log.warn("Gemini API invocation failed: {}. Falling back to deterministic translation.", e.getMessage());
+            lastGenerationFallback.set(true);
             return generateDeterministicSegmentRules(naturalLanguagePrompt);
         }
     }
@@ -89,7 +104,7 @@ public class DefaultGeminiClient implements GeminiClient {
     @Override
     public String generateCampaignSummary(String campaignMetricsDescription) {
         if (apiKey.isEmpty()) {
-            return generateDeterministicCampaignSummary(campaignMetricsDescription);
+            throw new ServiceUnavailableException("Google Gemini AI API key is unconfigured. Campaign summary generation requires an active AI provider.");
         }
 
         try {
@@ -116,8 +131,8 @@ public class DefaultGeminiClient implements GeminiClient {
             log.error("Gemini API connection timed out or unreachable", e);
             throw new ServiceUnavailableException("Google Gemini AI API is unreachable or timed out", e);
         } catch (Exception e) {
-            log.warn("Gemini API invocation failed: {}. Falling back to deterministic summary.", e.getMessage());
-            return generateDeterministicCampaignSummary(campaignMetricsDescription);
+            log.error("Gemini API invocation failed: {}", e.getMessage(), e);
+            throw new ServiceUnavailableException("Google Gemini AI API invocation failed: " + e.getMessage(), e);
         }
     }
 

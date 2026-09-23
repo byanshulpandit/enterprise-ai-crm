@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS customers (
     CONSTRAINT uq_customers_email UNIQUE (email),
     INDEX idx_cust_del_spent (deleted_at, total_spend),
     INDEX idx_cust_del_city (deleted_at, city),
+    INDEX idx_cust_del_visits (deleted_at, visit_count),
+    INDEX idx_cust_del_last_active (deleted_at, last_active_date),
     INDEX idx_cust_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -29,7 +31,8 @@ CREATE TABLE IF NOT EXISTS customer_tags (
     updated_at DATETIME(6) NOT NULL,
     CONSTRAINT fk_cust_tags_customer FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE ON UPDATE RESTRICT,
     CONSTRAINT uq_customer_tag UNIQUE (customer_id, tag),
-    INDEX idx_tag (tag)
+    INDEX idx_tag (tag),
+    INDEX idx_cust_tags_tag_cust (tag, customer_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -151,6 +154,28 @@ CREATE TABLE IF NOT EXISTS ai_segment_audits (
     CONSTRAINT chk_ai_audit_action CHECK (action_taken IN ('SAVED', 'DISCARDED')),
     INDEX idx_ai_audit_user (user_id),
     INDEX idx_ai_audit_segment (segment_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Hardening #1: Transactional Outbox Schema
+
+CREATE TABLE IF NOT EXISTS campaign_delivery_outbox (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    campaign_id BIGINT UNSIGNED NOT NULL,
+    customer_id BIGINT UNSIGNED NOT NULL,
+    delivery_record_id BIGINT UNSIGNED NOT NULL,
+    correlation_id VARCHAR(100) NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    retry_count INT UNSIGNED NOT NULL DEFAULT 0,
+    last_error VARCHAR(500) NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    published_at DATETIME(6) NULL,
+
+    CONSTRAINT fk_outbox_campaign FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE ON UPDATE RESTRICT,
+    CONSTRAINT fk_outbox_deliv_record FOREIGN KEY (delivery_record_id) REFERENCES campaign_delivery_records(id) ON DELETE CASCADE ON UPDATE RESTRICT,
+    CONSTRAINT chk_outbox_status CHECK (status IN ('PENDING', 'PUBLISHED', 'FAILED')),
+    INDEX idx_outbox_status_created (status, created_at),
+    INDEX idx_outbox_camp_id (campaign_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 

@@ -34,8 +34,9 @@ The platform is designed following the **Event-Driven 3-Tier Enterprise SaaS Arc
 ┌─────────────────────▼─────────────────────┐       ┌─────────────▼───────────────────────┐
 │ Authoritative Relational Persistence      │       │ Transient Async Messaging Transport │
 │ MySQL 8.4 (InnoDB, utf8mb4)               │       │ Redis Streams                       │
-│ - 8 Canonical Tables                      │       │ - crm:campaign:deliveries:stream    │
+│ - 9 Canonical Tables (inc. Outbox)         │       │ - crm:campaign:deliveries:stream    │
 │ - READ COMMITTED Transaction Isolation    │       │ - Consumer Group: crm:delivery:workers│
+│ - Transactional Outbox Pattern            │       │ - Safe Stream Min-ID Trimming       │
 │ - Row-level Locking & Foreign Key Integrity│      │ - At-least-once with manual XACK    │
 └───────────────────────────────────────────┘       └─────────────────────────────────────┘
 ```
@@ -47,11 +48,11 @@ The platform is designed following the **Event-Driven 3-Tier Enterprise SaaS Arc
 - **Runtime & Language:** Java 21 LTS, OpenJDK
 - **Framework:** Spring Boot 3.3.3, Spring Security 6.x, Spring Data JPA / Hibernate 6.5
 - **Primary Database:** MySQL 8.4 (Sole persistent source of truth)
-- **Async Messaging & Queuing:** Redis Streams (Lettuce client, transient transport only)
+- **Async Messaging & Queuing:** Redis Streams (Lettuce client, transient transport only, with Transactional Outbox)
 - **File Parsing:** OpenCSV 5.9 (CSV streaming), Apache POI 5.3.0 SAX (XLSX streaming)
-- **Generative AI:** Google Gemini 1.5 Flash (via Spring AI / REST client abstraction)
+- **Generative AI:** Google Gemini 1.5 Flash (via Spring AI / REST client abstraction with bounded timeouts)
 - **API Documentation:** SpringDoc OpenAPI 2.6.0 / Swagger UI
-- **Observability:** Spring Boot Actuator, SLF4J + Logback with MDC correlation IDs
+- **Observability:** Spring Boot Actuator, SLF4J + Logback with MDC correlation IDs (propagated asynchronously)
 - **Testing:** JUnit 5, Mockito, Spring Security Test, Awaitility, Maven Surefire
 - **Containerization:** Docker (Multi-stage build, non-root user), Docker Compose
 
@@ -73,6 +74,11 @@ The platform is designed following the **Event-Driven 3-Tier Enterprise SaaS Arc
 | `GEMINI_API_KEY` | *(optional)* | Google Gemini API key (defaults to deterministic translator if omitted) |
 | `CRM_STREAM_KEY` | `crm:campaign:deliveries:stream` | Redis Stream key for campaign dispatch |
 | `CRM_CONSUMER_GROUP` | `crm:delivery:workers` | Redis Stream consumer group name |
+| `CRM_REDIS_MAX_STREAM_LENGTH` | `10000` | Redis Stream approximate trimming threshold (prevent unbounded growth) |
+| `CRM_REDIS_OUTBOX_POLL_INTERVAL_MS` | `5000` | Background outbox poller interval for unpublished events |
+| `CRM_REDIS_PEL_RECOVERY_INTERVAL_MS` | `10000` | Redis Pending Entries List (PEL) stale message recovery interval |
+| `CRM_AI_CONNECT_TIMEOUT_MS` | `3000` | Gemini API connection timeout in milliseconds |
+| `CRM_AI_READ_TIMEOUT_MS` | `7000` | Gemini API read timeout in milliseconds |
 
 ---
 
@@ -85,13 +91,13 @@ The platform is designed following the **Event-Driven 3-Tier Enterprise SaaS Arc
 - Redis server running on port 6379
 
 ### 4.2 Database Initialization
-The database schema is defined in `src/main/resources/schema.sql` containing all 8 canonical tables:
+The database schema is defined in `src/main/resources/schema.sql` containing all 9 canonical tables:
 ```bash
 mysql -u root -p crm_db < src/main/resources/schema.sql
 ```
 
 ### 4.3 Running Tests
-Run the complete automated test suite (340 tests across M0–M12):
+Run the complete automated test suite (352 tests across M0–M12 and production hardening):
 ```bash
 mvn clean test
 ```
@@ -164,7 +170,7 @@ To authenticate in Swagger UI:
 - `GET /api/v1/customers/search` — Search customers by name, email, or city.
 
 ### 7.4 Bulk Ingestion (`/api/v1/uploads`)
-- `POST /api/v1/uploads/bulk` — Multipart upload of CSV or XLSX files (streaming, batch size 200, partial success).
+- `POST /api/v1/uploads/bulk` — Multipart upload of CSV or XLSX files (streaming, batch size 200, partial success, deterministic soft-delete duplicate handling).
 - `GET /api/v1/uploads/history` — Paginated audit history of customer file imports.
 
 ### 7.5 Segmentation (`/api/v1/segments`)
@@ -182,31 +188,31 @@ To authenticate in Swagger UI:
 - `GET /api/v1/campaigns/{id}` — Get campaign by ID.
 - `PATCH /api/v1/campaigns/{id}` — Update campaign copy/settings (`DRAFT` only).
 - `DELETE /api/v1/campaigns/{id}` — Delete campaign (`DRAFT` only, *ROLE_ADMIN only*).
-- `POST /api/v1/campaigns/{id}/launch` — Atomically evaluate segment, lock row, transition `DRAFT` $\to$ `RUNNING`, create `PENDING` obligations, and enqueue to Redis Streams. Rejects zero-audience with 400 Bad Request.
+- `POST /api/v1/campaigns/{id}/launch` — Atomically evaluate segment, lock row, transition `DRAFT` $\to$ `RUNNING`, create `PENDING` obligations, stage events in `campaign_delivery_outbox`, and asynchronously dispatch to Redis Streams with large audience chunked batching (500/page). Rejects zero-audience with 400 Bad Request.
 
 ### 7.7 Campaign Delivery Tracking (`/api/v1/campaigns/{id}`)
 - `GET /api/v1/campaigns/{id}/delivery-summary` — Aggregated delivery counts (`pendingCount`, `sentCount`, `failedCount`, `completionPercentage`, `isTerminal`).
 - `GET /api/v1/campaigns/{id}/deliveries` — Paginated recipient delivery ledger (`status`, `processedAt`, `failureReason`).
 
 ### 7.8 Generative AI (`/api/v1/ai`)
-- `POST /api/v1/ai/segments/generate-rules` — Translate natural-language prompt into validated Boolean AST rule tree.
+- `POST /api/v1/ai/segments/generate-rules` — Translate natural-language prompt into validated Boolean AST rule tree (with `isFallback` indicator when deterministic fallback is used).
 - `GET /api/v1/ai/segments/audits` — Compliance audit history of all AI prompts and generated ASTs (*ROLE_ADMIN only*).
 
 ### 7.9 Analytics & Reporting (`/api/v1/reports`)
 - `GET /api/v1/reports/campaigns/{id}` — Delivery rate, timeline, and duration for campaign.
 - `GET /api/v1/reports/customers/overview` — High-level customer demographic KPIs, total spend, average spend, and top locations.
-- `GET /api/v1/reports/campaigns/{id}/ai-summary` — AI narrative summary of campaign outcomes generated by Gemini.
+- `GET /api/v1/reports/campaigns/{id}/ai-summary` — AI narrative summary of campaign outcomes generated by Gemini (returns 503 Service Unavailable when Gemini is unconfigured or unavailable).
 - `GET /api/v1/reports/campaigns/history` — Paginated historical campaign performance summaries.
 
 ---
 
-## 8. Verification & Quality Assurance
+## 8. Verification & Production Quality Assurance
 
-All 340 test cases pass with 0 failures, 0 errors, and 0 skipped tests:
+All 352 test cases pass with 0 failures, 0 errors, and 0 skipped tests:
 - **Baseline Modules (M0–M6):** 290/290 passing
-- **M7 Bulk Ingestion:** CSV streaming, XLSX SAX streaming, duplicate detection, partial success, error serialization
-- **M8 Redis Streams & Asynchronous Architecture:** In-flight queueing, worker pool consumption, PEL management, at-least-once delivery, manual `XACK`
-- **M9 Campaign Execution & Concurrency:** Pessimistic locking (`SELECT FOR UPDATE`), zero-audience invariant, state machine transitions (`DRAFT` $\to$ `RUNNING` $\to$ `COMPLETED`), duplicate delivery prevention
-- **M10 Generative AI & Auditing:** Prompt translation, AST validation gates, immutable compliance logs in `ai_segment_audits`, graceful failure isolation (503 Service Unavailable)
-- **M11 Observability & Reporting:** `X-Request-Id` correlation filter, SLF4J MDC, Actuator health endpoints, cross-domain performance analytics
+- **M7 Bulk Ingestion:** CSV streaming, XLSX SAX streaming, duplicate detection (active vs. soft-deleted rejection), partial success, batch fallback persistence
+- **M8 Redis Streams & Asynchronous Architecture:** Transactional Outbox pattern, worker pool consumption, PEL stale message recovery, at-least-once delivery, manual `XACK`, safe MINID/MAXLEN stream trimming
+- **M9 Campaign Execution & Concurrency:** Pessimistic locking (`SELECT FOR UPDATE`), zero-audience invariant, state machine transitions (`DRAFT` $\to$ `RUNNING` $\to$ `COMPLETED`), duplicate delivery prevention, chunked large audience materialization
+- **M10 Generative AI & Auditing:** Prompt translation, AST validation gates, fallback transparency (`isFallback`), strict 503 on unconfigured summaries, immutable compliance logs in `ai_segment_audits`
+- **M11 Observability & Reporting:** `X-Request-Id` correlation filter, SLF4J MDC async propagation across Redis Stream dispatch and consumption, Actuator health endpoints, cross-domain performance analytics
 - **M12 Deployment & Documentation:** OpenAPI 3.0 specification, multi-stage Dockerfile, Docker Compose stack

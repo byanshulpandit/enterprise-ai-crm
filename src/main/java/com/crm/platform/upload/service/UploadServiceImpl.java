@@ -107,15 +107,15 @@ public class UploadServiceImpl implements UploadService {
 
                 batch.add(row);
                 if (batch.size() >= BATCH_SIZE) {
-                    persistBatch(batch);
-                    successCount[0] += batch.size();
+                    int saved = persistBatchWithFallback(batch, allErrors);
+                    successCount[0] += saved;
                     batch.clear();
                 }
             });
 
             if (!batch.isEmpty()) {
-                persistBatch(batch);
-                successCount[0] += batch.size();
+                int saved = persistBatchWithFallback(batch, allErrors);
+                successCount[0] += saved;
                 batch.clear();
             }
         } catch (InvalidRequestException e) {
@@ -230,36 +230,77 @@ public class UploadServiceImpl implements UploadService {
             return "Duplicate email address within uploaded file: " + email;
         }
 
-        if (customerRepository.existsByEmail(email)) {
-            return "Customer with email already exists: " + email;
+        java.util.Optional<Customer> existingCustomer = customerRepository.findByEmail(normalizedEmail);
+        if (existingCustomer.isEmpty()) {
+            existingCustomer = customerRepository.findByEmail(email);
+        }
+        if (existingCustomer.isPresent()) {
+            if (existingCustomer.get().getDeletedAt() != null) {
+                return "Customer with email already exists (soft-deleted): " + email;
+            } else {
+                return "Customer with email already exists: " + email;
+            }
         }
 
         return null;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void persistBatch(List<ParsedRow> batch) {
+    public int persistBatchWithFallback(List<ParsedRow> batch, List<UploadErrorDetail> allErrors) {
         List<Customer> customersToSave = new ArrayList<>(batch.size());
         for (ParsedRow row : batch) {
-            Customer customer = new Customer();
-            customer.setFirstName(row.getFirstName().trim());
-            customer.setLastName(row.getLastName().trim());
-            customer.setEmail(row.getEmail().trim());
-            customer.setPhone(row.getPhone());
-            customer.setCity(row.getCity());
-            customer.setCountry(row.getCountry());
-            customer.setTotalSpend(row.getTotalSpend() != null ? row.getTotalSpend() : BigDecimal.ZERO);
-            customer.setVisitCount(row.getVisitCount() != null ? row.getVisitCount() : 0);
-            customer.setLastActiveDate(row.getLastActiveDate());
+            customersToSave.add(toCustomerEntity(row));
+        }
 
-            if (row.getTags() != null) {
-                for (String tag : row.getTags()) {
-                    customer.addTag(tag);
+        try {
+            customerRepository.saveAll(customersToSave);
+            customerRepository.flush();
+            return customersToSave.size();
+        } catch (Exception batchEx) {
+            log.warn("Batch save failed for {} records; invoking per-row fallback: {}",
+                    batch.size(), batchEx.getMessage());
+            int savedCount = 0;
+            for (ParsedRow row : batch) {
+                try {
+                    persistSingleCustomer(toCustomerEntity(row));
+                    savedCount++;
+                } catch (Exception rowEx) {
+                    log.debug("Fallback per-row save failed for row #{}, email={}: {}",
+                            row.getRowNumber(), row.getEmail(), rowEx.getMessage());
+                    allErrors.add(new UploadErrorDetail(
+                            row.getRowNumber(),
+                            row.getEmail() != null ? row.getEmail() : "N/A",
+                            "Database constraint error: " + (rowEx.getMessage() != null ? rowEx.getMessage() : "Insert failed")
+                    ));
                 }
             }
-            customersToSave.add(customer);
+            return savedCount;
         }
-        customerRepository.saveAll(customersToSave);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void persistSingleCustomer(Customer customer) {
+        customerRepository.saveAndFlush(customer);
+    }
+
+    private Customer toCustomerEntity(ParsedRow row) {
+        Customer customer = new Customer();
+        customer.setFirstName(row.getFirstName().trim());
+        customer.setLastName(row.getLastName().trim());
+        customer.setEmail(row.getEmail().trim());
+        customer.setPhone(row.getPhone());
+        customer.setCity(row.getCity());
+        customer.setCountry(row.getCountry());
+        customer.setTotalSpend(row.getTotalSpend() != null ? row.getTotalSpend() : BigDecimal.ZERO);
+        customer.setVisitCount(row.getVisitCount() != null ? row.getVisitCount() : 0);
+        customer.setLastActiveDate(row.getLastActiveDate());
+
+        if (row.getTags() != null) {
+            for (String tag : row.getTags()) {
+                customer.addTag(tag);
+            }
+        }
+        return customer;
     }
 
     private String serializeErrors(List<UploadErrorDetail> errors) {

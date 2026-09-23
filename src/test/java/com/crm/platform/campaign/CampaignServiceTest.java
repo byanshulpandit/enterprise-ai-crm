@@ -26,7 +26,9 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
+import com.crm.platform.delivery.entity.CampaignDeliveryRecord;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -59,6 +61,12 @@ public class CampaignServiceTest {
     @Mock
     private com.crm.platform.delivery.service.DeliveryStreamProducer deliveryStreamProducer;
 
+    @Mock
+    private com.crm.platform.delivery.repository.CampaignDeliveryOutboxRepository outboxRepository;
+
+    @Mock
+    private com.crm.platform.delivery.service.DeliveryOutboxPublisher outboxPublisher;
+
     private CampaignServiceImpl campaignService;
     private User testUser;
     private Segment testSegment;
@@ -72,7 +80,9 @@ public class CampaignServiceTest {
                 segmentService,
                 customerRepository,
                 deliveryRecordRepository,
-                deliveryStreamProducer
+                deliveryStreamProducer,
+                outboxRepository,
+                outboxPublisher
         );
 
         testUser = new User("marketer_user", "marketer@crm.internal", "hash", RoleEnum.ROLE_MARKETER, Boolean.TRUE);
@@ -264,8 +274,17 @@ public class CampaignServiceTest {
 
         when(campaignRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(campaign));
         when(segmentService.compileSegmentRules(testSegment.getId())).thenReturn(dummySpec);
-        when(customerRepository.findAll(dummySpec)).thenReturn(java.util.List.of(c1, c2));
+        when(customerRepository.count(dummySpec)).thenReturn(2L);
+        when(customerRepository.findAll(org.mockito.ArgumentMatchers.eq(dummySpec), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(c1, c2)));
         when(campaignRepository.save(any(Campaign.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(deliveryRecordRepository.saveAll(any())).thenAnswer(invocation -> {
+            List<CampaignDeliveryRecord> list = invocation.getArgument(0);
+            for (long i = 1; i <= list.size(); i++) {
+                list.get((int) (i - 1)).setId(i);
+            }
+            return list;
+        });
 
         com.crm.platform.campaign.dto.CampaignLaunchResponse response = campaignService.launchCampaign(100L);
 
@@ -277,7 +296,8 @@ public class CampaignServiceTest {
         assertThat(campaign.getStartedAt()).isNotNull();
 
         verify(deliveryRecordRepository).saveAll(any());
-        verify(deliveryStreamProducer).enqueueDeliveries(org.mockito.ArgumentMatchers.eq(100L), any());
+        verify(outboxRepository).saveAll(any());
+        verify(outboxPublisher).triggerImmediatePublish();
     }
 
     @Test
@@ -293,7 +313,8 @@ public class CampaignServiceTest {
                 .isInstanceOf(InvalidRequestException.class)
                 .hasMessageContaining("Only campaigns in DRAFT status can be launched. Current status: RUNNING");
 
-        verify(deliveryStreamProducer, never()).enqueueDeliveries(any(), any());
+        verify(outboxRepository, never()).saveAll(any());
+        verify(outboxPublisher, never()).triggerImmediatePublish();
     }
 
     @Test
@@ -307,7 +328,7 @@ public class CampaignServiceTest {
 
         when(campaignRepository.findByIdForUpdate(102L)).thenReturn(Optional.of(campaign));
         when(segmentService.compileSegmentRules(testSegment.getId())).thenReturn(dummySpec);
-        when(customerRepository.findAll(dummySpec)).thenReturn(Collections.emptyList());
+        when(customerRepository.count(dummySpec)).thenReturn(0L);
 
         assertThatThrownBy(() -> campaignService.launchCampaign(102L))
                 .isInstanceOf(InvalidRequestException.class)
@@ -315,6 +336,7 @@ public class CampaignServiceTest {
 
         assertThat(campaign.getStatus()).isEqualTo(CampaignStatus.DRAFT);
         verify(campaignRepository, never()).save(any());
-        verify(deliveryStreamProducer, never()).enqueueDeliveries(any(), any());
+        verify(outboxRepository, never()).saveAll(any());
+        verify(outboxPublisher, never()).triggerImmediatePublish();
     }
 }

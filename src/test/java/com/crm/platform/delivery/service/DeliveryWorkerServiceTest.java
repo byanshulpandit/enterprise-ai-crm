@@ -32,11 +32,13 @@ class DeliveryWorkerServiceTest {
     @Mock
     private CampaignRepository campaignRepository;
 
+    private com.crm.platform.delivery.provider.SimulatedDeliveryProvider deliveryProvider;
     private DeliveryWorkerServiceImpl workerService;
 
     @BeforeEach
     void setUp() {
-        workerService = new DeliveryWorkerServiceImpl(deliveryRecordRepository, campaignRepository);
+        deliveryProvider = new com.crm.platform.delivery.provider.SimulatedDeliveryProvider();
+        workerService = new DeliveryWorkerServiceImpl(deliveryRecordRepository, campaignRepository, deliveryProvider);
     }
 
     @Test

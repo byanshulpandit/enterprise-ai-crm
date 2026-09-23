@@ -52,11 +52,11 @@ This specification is directly derived from and strictly governed by:
 
 ## 4. Final Entity Inventory
 
-The confirmed v1 persistent database schema consists of exactly **8 relational tables**:
+The confirmed persistent database schema consists of exactly **9 relational tables**:
 
 ```
 +----------------------------------------------------------------------------------------------------+
-|                                    CONFIRMED ENTITY INVENTORY (v1)                                  |
+|                                    CONFIRMED ENTITY INVENTORY (v1 Hardened)                        |
 +----------------------------------------------------------------------------------------------------+
 | 1. users                      : Operator identities, authentication credentials, and RBAC roles.    |
 | 2. customers                  : Authoritative customer demographic, financial, and contact records. |
@@ -66,11 +66,12 @@ The confirmed v1 persistent database schema consists of exactly **8 relational t
 | 6. campaign_delivery_records  : Granular per-recipient message delivery tracking and status logs.   |
 | 7. upload_history             : Audit ledger of bulk CSV/XLSX file ingestion jobs and row outcomes. |
 | 8. ai_segment_audits          : Compliance audit trail for AI natural-language segmentation prompts.|
+| 9. campaign_delivery_outbox   : Durable transactional outbox staging events for Redis Streams.      |
 +----------------------------------------------------------------------------------------------------+
 ```
 
 > [!IMPORTANT]
-> A generic `audit_logs` table is explicitly **`[OUT OF SCOPE]`**. Operational and administrative events are captured via SLF4J/MDC structured application logs per `NFR-MAINT-003`. Domain-specific audits are persisted in `ai_segment_audits` and `upload_history`.
+> A generic `audit_logs` table is explicitly **`[OUT OF SCOPE]`**. Operational and administrative events are captured via SLF4J/MDC structured application logs per `NFR-MAINT-003`. Domain-specific audits are persisted in `ai_segment_audits` and `upload_history`. The `campaign_delivery_outbox` table guarantees atomicity between MySQL transactional state mutations and asynchronous Redis Streams publication (Hardening #1).
 
 ---
 
@@ -308,6 +309,37 @@ The confirmed v1 persistent database schema consists of exactly **8 relational t
   - `fk_ai_audit_segment`: `segment_id` $\to$ `segments(id)` `ON DELETE SET NULL ON UPDATE RESTRICT`.
 - **Delete Behavior:** If a saved segment is subsequently deleted, `segment_id` is set to `NULL` (`ON DELETE SET NULL`), preserving the immutable prompt audit log.
 - **Update Behavior:** Immutable append-only. `updated_at` is initialized equal to `created_at` and not modified.
+
+---
+
+### 6.9 `campaign_delivery_outbox` Table
+- **Purpose:** Durable transactional outbox table staging asynchronous message dispatch events to Redis Streams within the exact same MySQL transaction as campaign launch and delivery ledger generation (Hardening #1).
+- **Mutability:** Mutable state transitions from `PENDING` $\to$ `PUBLISHED` or `FAILED`.
+
+| Column | Data Type | Nullable | Default | Constraints | Description |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `id` | `BIGINT UNSIGNED` | NO | `AUTO_INCREMENT` | `PRIMARY KEY` | Surrogate primary key. |
+| `campaign_id` | `BIGINT UNSIGNED` | NO | None | `FOREIGN KEY` | References target `campaigns.id`. |
+| `delivery_id` | `BIGINT UNSIGNED` | NO | None | `FOREIGN KEY` | References target `campaign_delivery_records.id`. |
+| `customer_id` | `BIGINT UNSIGNED` | NO | None | None | Recipient customer identifier. |
+| `customer_email`| `VARCHAR(255)` | NO | None | None | Recipient email address. |
+| `customer_name` | `VARCHAR(255)` | NO | None | None | Recipient formatted name. |
+| `message` | `TEXT` | NO | None | None | Resolved template message payload. |
+| `correlation_id`| `VARCHAR(64)` | YES | `NULL` | None | Distributed correlation tracking identifier (propagated via MDC). |
+| `status` | `VARCHAR(20)` | NO | `'PENDING'` | `CHECK (status IN ('PENDING', 'PUBLISHED', 'FAILED'))` | Outbox publication lifecycle state. |
+| `retry_count` | `INT UNSIGNED` | NO | `0` | None | Number of Redis Stream publication attempts. |
+| `created_at` | `DATETIME(6)` | NO | None | None | Staging timestamp (UTC). |
+| `published_at` | `DATETIME(6)` | YES | `NULL` | None | Redis Stream confirmation timestamp (UTC). |
+| `updated_at` | `DATETIME(6)` | NO | None | None | State modification timestamp (UTC). |
+
+- **Foreign Keys:**
+  - `fk_outbox_campaign`: `campaign_id` $\to$ `campaigns(id)` `ON DELETE RESTRICT ON UPDATE RESTRICT`.
+  - `fk_outbox_delivery`: `delivery_id` $\to$ `campaign_delivery_records(id)` `ON DELETE RESTRICT ON UPDATE RESTRICT`.
+- **Indexes:**
+  - `idx_outbox_status_created`: `(status, created_at)` optimizing FIFO polling of pending outbox events.
+  - `idx_outbox_delivery_id`: `(delivery_id)` optimizing delivery-specific lookups.
+- **Delete Behavior:** Retained for auditability or pruned according to configurable data retention policies.
+- **Update Behavior:** Updated atomically by `DeliveryOutboxPublisher` upon receiving confirmation of `XADD` dispatch to Redis Streams.
 
 ---
 
