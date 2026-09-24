@@ -688,11 +688,15 @@ For each campaign-customer pair, a delivery log record is persisted in MySQL:
 
 ---
 
-#### FR-DEL-003 — Delivery Simulation Logic
+#### FR-DEL-003 — Configurable Delivery Provider Logic
 
 **Priority:** P1 - Critical | **Role:** System (Internal)
 
-Delivery is **simulated** (no real email/SMS integration). Workers mark records SENT or FAILED based on a configurable probabilistic success rate set via application properties. Simulation is clearly identified in system logs.
+Campaign delivery is decoupled into a pluggable `DeliveryProvider` abstraction supporting two implementations:
+1. **Simulated Delivery (`SimulatedDeliveryProvider`):** Deterministic probabilistic execution (~90% SENT, ~10% FAILED) for unit testing and demonstration without external dependencies.
+2. **Real SMTP Delivery (`SmtpDeliveryProvider`):** Real email dispatch over RFC 821/5322 SMTP protocols against local SMTP sinks (e.g. MailHog, GreenMail) or external SMTP relays, enforcing delivery idempotency keys (`X-Delivery-Idempotency-Key`), safe retries, and correlation ID propagation without logging credentials.
+
+Provider selection is controlled via `crm.delivery.provider` (`simulated` | `smtp`) with strict startup validation.
 
 ---
 
@@ -1173,8 +1177,8 @@ The following features are explicitly **excluded** from scope. Any requests to i
 
 | #  | Feature                         | Reason for Exclusion                                                  |
 |----|---------------------------------|-----------------------------------------------------------------------|
-| 1  | Real Email Delivery             | Simulated only; no SMTP/SES/Mailgun integration                       |
-| 2  | Real SMS / Push Notifications   | Only delivery simulation is in scope                                  |
+| 1  | Third-Party Managed SaaS Email  | Real local/standard RFC SMTP delivery is supported via `SmtpDeliveryProvider`; third-party vendor-specific SDK integrations (SendGrid/Mailgun/SES proprietary APIs) are deferred |
+| 2  | Real SMS / Push Notifications   | Only simulated and SMTP email delivery are currently supported        |
 | 3  | Mobile Application              | Backend REST API only; no iOS/Android app                             |
 | 4  | Separate Frontend Framework     | No React, Angular, or Vue frontend is in current scope. REST API + OpenAPI/Swagger UI is the primary interface. A lightweight Thymeleaf view layer may be considered in a future phase only if explicitly required. |
 | 5  | Payment / Billing               | No billing, subscription, or payment processing                       |
@@ -1199,12 +1203,13 @@ The following features are explicitly **excluded** from scope. Any requests to i
 |------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
 | A-01 | **MySQL 8.x is the sole persistent data store.** Redis is used exclusively for transient, asynchronous buffering and queueing.                         |
 | A-02 | **RBAC has exactly two roles:** ROLE_ADMIN and ROLE_MARKETER. ADMIN is a superset of MARKETER.                                                         |
-| A-03 | **Campaign delivery is simulated.** No real email, SMS, or push integration. Simulation marks delivery records as SENT/FAILED in MySQL.                |
+| A-03 | **Campaign delivery supports both simulated and real SMTP delivery.** Configured via `crm.delivery.provider`: `simulated` for offline deterministic testing, `smtp` for local SMTP test sinks (MailHog/GreenMail) or production standard SMTP servers. |
 | A-04 | **AI segmentation produces a structured rule tree** semantically identical to a manually built segment and stored in the same data model.              |
 | A-05 | **The Gemini API is accessed via Spring AI** as the abstraction layer, enabling potential provider substitution in future.                              |
-| A-06 | **Docker Compose** covers the complete local development environment: Spring Boot application, MySQL 8.x, and Redis.                                   |
+| A-06 | **Docker Compose** covers the complete local development environment: Spring Boot application, MySQL 8.4, Redis 7, and MailHog SMTP test sink.       |
 | A-07 | **SpringDoc OpenAPI (v2.x, compatible with Spring Boot 3.x)** is used for API documentation.                                                          |
 | A-08 | **This SRS is versioned.** All changes must be recorded in the Revision History (Section 10) and approved before implementation.                         |
+
 
 ### 9.2 Open Design Decisions (Deferred to Later SDLC Phases)
 

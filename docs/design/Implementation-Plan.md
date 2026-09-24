@@ -729,9 +729,9 @@ Requires `M1` and `M5`. Local/containerized Redis active.
 - Redis stream config, message producer, consumer listener, delivery worker executor, `CampaignDeliveryRecord` entity/repo.
 
 ### 17.8 Testing Scope
-- **Unit Testing:** Simulated delivery distribution tests (verifying ~90/10 ratio); payload serialization tests.
-- **Integration Testing:** Test container/local Redis integration test producing stream messages and asserting consumer receipt, database update, and `XACK` execution.
-- **Manual Verification:** Enqueue test delivery task; monitor Redis CLI (`XPENDING`, `XACK`); verify row updated to `SENT` or `FAILED` in MySQL.
+- **Unit Testing:** Simulated delivery distribution tests (verifying ~90/10 ratio); payload serialization tests; `SmtpDeliveryProviderTest` validating RFC 821/5322 compliance, timeouts, delivery idempotency caching, and connection failure handling; `DeliveryProviderConfigTest` validating provider selection (`simulated` vs `smtp`) and fail-fast startup on invalid inputs.
+- **Integration Testing:** Test container/local Redis integration test producing stream messages and asserting consumer receipt, database update, and `XACK` execution; `SmtpDeliveryEndToEndIntegrationTest` with GreenMail verifying full async Campaign $\to$ Outbox $\to$ Redis $\to$ Worker $\to$ SmtpDeliveryProvider $\to$ GreenMail SMTP server $\to$ MySQL delivery ledger update.
+- **Manual Verification:** Enqueue test delivery task; monitor Redis CLI (`XPENDING`, `XACK`); verify row updated to `SENT` or `FAILED` in MySQL; inspect local MailHog sink on port 1025.
 
 ### 17.9 Negative / Edge Cases
 - Worker crashes before `XACK` (task remains in PEL); duplicate message receipt handled via conditional update.
@@ -1169,7 +1169,7 @@ The implementation plan acknowledges the following unresolved decisions and defi
 | **`FR-CAMP-004`** | Zero-Audience Rejection | API §9.1, Security §12 | `M9` | Empty audience launch test asserting campaign remains `DRAFT` |
 | **`FR-CAMP-005`** | Campaign Status Tracking | API §14.6.1, §14.6.2 | `M9` | Real-time delivery summary polling test |
 | **`FR-DEL-001`** | Async Message Dispatch | System §5.2, Security §11 | `M8` | Redis Stream message enqueue verification |
-| **`FR-DEL-002`** | Simulated Delivery Worker | Security §12, §17 | `M8` | Delivery simulation distribution test (~90/10 ratio) |
+| **`FR-DEL-002`** | Configurable Delivery Provider | Security §12, §17 | `M8` | Delivery simulation distribution test (~90/10 ratio) and real SMTP delivery tests (GreenMail, MailHog) |
 | **`FR-DEL-003`** | Delivery Status Updates | Database §4.6, Security §15 | `M8`, `M9` | MySQL status verification (`SENT`, `FAILED`) |
 | **`FR-AI-SEG-001`** | Natural Language Query Input | API §14.7.1, Security §20 | `M10` | AI prompt endpoint integration test |
 | **`FR-AI-SEG-002`** | AST JSON Output via Gemini | API §14.7.1, Security §21 | `M10` | AST schema validator integration test |

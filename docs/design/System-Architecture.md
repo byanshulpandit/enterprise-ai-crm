@@ -151,6 +151,18 @@ To preserve governance clarity across reviews and prevent premature architectura
   - The client receives a synchronous `200 OK` response containing total rows processed, successful insertions, skipped rows, and an array of specific row validation failures.
   - **Asynchronous Acceptance Deferred:** Asynchronous ingestion (submitting file, returning `202 Accepted` with a tracking `jobId`) is deferred to Phase 3 scaling should client HTTP timeout limits be reached on large payloads.
 
+### AD-11: Configurable Delivery Provider Architecture (`SimulatedDeliveryProvider` & `SmtpDeliveryProvider`)
+- **Classification:** `[DECIDED]`
+- **Decision:** **Pluggable `DeliveryProvider` Abstraction** with two first-class implementations:
+  1. `SimulatedDeliveryProvider`: In-memory deterministic 90% SENT / 10% FAILED simulation for deterministic unit tests and offline demos without external network services.
+  2. `SmtpDeliveryProvider`: Real RFC 821/5322 email delivery over TCP, connecting to local development SMTP sinks (MailHog v1.0.1, GreenMail) or external production SMTP servers.
+- **Key Architectural Rules:**
+  - **Provider Inversion & Decoupling:** The delivery consumer worker (`DeliveryStreamConsumer`) invokes `DeliveryProvider` exclusively, remaining completely decoupled from network transport and SMTP protocols.
+  - **Configuration-Driven Selection:** Driven via `crm.delivery.provider` (`simulated` | `smtp`). Missing, blank, or invalid providers trigger an explicit `IllegalStateException` on startup to prevent silent fallback to simulation.
+  - **Delivery Idempotency:** The provider contract mandates a stable `idempotencyKey` (`X-Delivery-Idempotency-Key` header). The provider memoizes completed sends per key to guarantee no duplicate SMTP emails are dispatched during Redis message re-delivery or consumer retries.
+  - **Security & Secret Protection:** SMTP host, port, username, password, and from address are injected via environment variables (`SMTP_*`). No passwords or credentials appear in logs or exception messages.
+  - **Local Verification Architecture:** Docker Compose orchestrates a dedicated `smtp` service (`mailhog/mailhog:v1.0.1`) on internal port 1025. Automated Spring Boot integration tests utilize embedded GreenMail to verify the full flow: Campaign $\to$ Outbox $\to$ Redis Stream $\to$ Worker $\to$ SmtpDeliveryProvider $\to$ SMTP Server $\to$ MySQL status persistence.
+
 ---
 
 ## 4. System Layering & Module Architecture

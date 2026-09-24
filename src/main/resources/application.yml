@@ -51,6 +51,8 @@ security:
       password: ${BOOTSTRAP_ADMIN_PASSWORD:}
 
 crm:
+  delivery:
+    provider: ${CRM_DELIVERY_PROVIDER:simulated}
   async:
     stream-key: ${CRM_STREAM_KEY:crm:campaign:deliveries:stream}
     consumer-group: ${CRM_CONSUMER_GROUP:crm:delivery:workers}
@@ -71,6 +73,14 @@ crm:
       model: ${GEMINI_MODEL:gemini-1.5-flash}
       connect-timeout-ms: ${GEMINI_CONNECT_TIMEOUT_MS:3000}
       read-timeout-ms: ${GEMINI_READ_TIMEOUT_MS:7000}
+
+smtp:
+  host: ${SMTP_HOST:localhost}
+  port: ${SMTP_PORT:1025}
+  username: ${SMTP_USERNAME:}
+  password: ${SMTP_PASSWORD:}
+  from: ${SMTP_FROM:noreply@crm.internal}
+  timeout-ms: ${SMTP_TIMEOUT_MS:5000}
 
 management:
   endpoints:

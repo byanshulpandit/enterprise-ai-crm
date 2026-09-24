@@ -72,6 +72,13 @@ The platform is designed following the **Event-Driven 3-Tier Enterprise SaaS Arc
 | `BOOTSTRAP_ADMIN_EMAIL` | `admin@crm.internal` | Initial admin email |
 | `BOOTSTRAP_ADMIN_PASSWORD` | `Admin123!` | Initial admin password |
 | `GEMINI_API_KEY` | *(optional)* | Google Gemini API key (defaults to deterministic translator if omitted) |
+| `CRM_DELIVERY_PROVIDER` | `simulated` | Delivery provider implementation (`simulated` or `smtp`) |
+| `SMTP_HOST` | `localhost` | SMTP server host (e.g. `smtp` in docker-compose, or external SMTP host) |
+| `SMTP_PORT` | `1025` | SMTP server port (1025 for MailHog, 587 for TLS, 465 for SSL) |
+| `SMTP_USERNAME` | *(optional)* | SMTP authentication username (not logged or exposed) |
+| `SMTP_PASSWORD` | *(optional)* | SMTP authentication password (not logged or exposed) |
+| `SMTP_FROM` | `noreply@crm.internal` | Standard RFC 5322 From address for outbound campaign emails |
+| `SMTP_TIMEOUT_MS` | `5000` | SMTP connection, socket, and read timeout in milliseconds |
 | `CRM_STREAM_KEY` | `crm:campaign:deliveries:stream` | Redis Stream key for campaign dispatch |
 | `CRM_CONSUMER_GROUP` | `crm:delivery:workers` | Redis Stream consumer group name |
 | `CRM_REDIS_MAX_STREAM_LENGTH` | `10000` | Redis Stream approximate trimming threshold (prevent unbounded growth) |
@@ -89,6 +96,7 @@ The platform is designed following the **Event-Driven 3-Tier Enterprise SaaS Arc
 - Maven 3.9+ installed and on `PATH`
 - MySQL 8.4 instance running on port 3306 with database `crm_db`
 - Redis server running on port 6379
+- Optional: Local SMTP server (e.g. MailHog on port 1025) for local SMTP delivery testing
 
 ### 4.2 Database Initialization
 The database schema is defined in `src/main/resources/schema.sql` containing all 9 canonical tables:
@@ -97,7 +105,7 @@ mysql -u root -p crm_db < src/main/resources/schema.sql
 ```
 
 ### 4.3 Running Tests
-Run the complete automated test suite (375 tests across M0–M12 and production hardening):
+Run the complete automated test suite (399 tests across M0–M12, production hardening, and SMTP delivery):
 ```bash
 mvn clean test
 ```
@@ -118,18 +126,61 @@ mvn spring-boot:run
 
 ---
 
-## 5. Docker & Docker Compose Deployment
+## 5. Delivery Provider & Docker Compose Architecture
 
-The platform includes a production-grade multi-stage Dockerfile and a complete local orchestration stack via `docker-compose.yml`:
+### 5.1 Configurable Delivery Architecture
+The platform decouples campaign asynchronous dispatch from message delivery transport through the `DeliveryProvider` interface:
+
+```
+Campaign Launch
+      ↓
+Transactional Outbox (MySQL 8.4)
+      ↓
+Redis Stream (`crm:campaign:deliveries:stream`)
+      ↓
+DeliveryStreamConsumer (Worker Pool)
+      ↓
+DeliveryProvider (Abstraction)
+  ├── SimulatedDeliveryProvider (`crm.delivery.provider=simulated`)
+  │     └── In-memory deterministic 90% SENT / 10% FAILED simulation for tests & demos
+  └── SmtpDeliveryProvider (`crm.delivery.provider=smtp`)
+        └── Actual RFC 821/5322 SMTP delivery over TCP with:
+              - Stable delivery idempotency key tracking (`X-Delivery-Idempotency-Key`)
+              - Safe error propagation and timeout handling (`smtp.timeout-ms`)
+              - Zero credential logging
+              - Re-delivery safety (cached idempotency results prevent duplicate sends on retry)
+```
+
+#### Delivery Provider Switching
+Switch delivery providers via configuration or environment variable:
+- **Simulated Provider:** Set `CRM_DELIVERY_PROVIDER=simulated` (default)
+- **Local / Production SMTP:** Set `CRM_DELIVERY_PROVIDER=smtp` along with `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and credentials if required.
+- **Strict Validation:** Blank or invalid provider values fail immediately at startup with an informative `IllegalStateException` preventing silent fallback.
+
+#### Delivery Environments:
+1. **Simulated Delivery:** Deterministic in-memory simulation, useful for unit tests and local demonstrations without external services.
+2. **Local SMTP Delivery:** Development and Docker runtime testing using a local SMTP sink (`mailhog` on port 1025 in `docker-compose.yml`, or embedded `GreenMail` in integration tests).
+3. **External Production SMTP:** Production delivery via enterprise SMTP relay or transactional email provider (e.g. Amazon SES, SendGrid, Mailgun SMTP) configured with TLS/SSL and credentials via environment variables.
+
+### 5.2 Docker & Docker Compose Deployment
+
+The platform provides a production-grade multi-stage Dockerfile and an orchestrated local stack via `docker-compose.yml` comprising:
+- **`app`:** Spring Boot 3.3.3 container (Java 21 LTS, non-root user)
+- **`mysql`:** MySQL 8.4 official container with healthcheck and automatic schema initialization
+- **`redis`:** Redis 7 container with append-only persistence and healthcheck
+- **`smtp`:** MailHog v1.0.1 local SMTP test sink (listening on port 1025; no exposed web UI)
 
 ```bash
-# Start MySQL 8.4, Redis 7, and the Application
+# Validate Compose configuration
+docker compose config
+
+# Build and start all 4 services
 docker compose up --build -d
 
-# View logs
+# View application logs
 docker compose logs -f app
 
-# Tear down
+# Tear down stack
 docker compose down -v
 ```
 
@@ -208,7 +259,7 @@ To authenticate in Swagger UI:
 
 ## 8. Verification & Production Quality Assurance
 
-All 375 test cases pass with 0 failures, 0 errors, and 0 skipped tests:
+All 399 test cases pass with 0 failures, 0 errors, and 0 skipped tests:
 - **Baseline Modules (M0–M6):** 290/290 passing
 - **M7 Bulk Ingestion:** CSV streaming, XLSX SAX streaming, duplicate detection (active vs. soft-deleted rejection), partial success, isolated `UploadBatchPersister` rollback and fallback persistence
 - **M8 Redis Streams & Asynchronous Architecture:** Transactional Outbox pattern, worker pool consumption, real PEL stale message ownership reclaim via `XCLAIM`, at-least-once delivery, manual `XACK`, safe MINID stream trimming protecting in-flight work
@@ -216,3 +267,5 @@ All 375 test cases pass with 0 failures, 0 errors, and 0 skipped tests:
 - **M10 Generative AI & Auditing:** Prompt translation, AST validation gates, fallback transparency (`isFallback`), strict 503 on unconfigured summaries with zero fabricated text, immutable compliance logs in `ai_segment_audits`
 - **M11 Observability & Reporting:** `X-Request-Id` correlation filter, SLF4J MDC async propagation across Redis Stream dispatch and consumption with guaranteed cleanup in `finally`, Actuator health endpoints, cross-domain performance analytics
 - **M12 Deployment & Documentation:** OpenAPI 3.0 specification, multi-stage Dockerfile, Docker Compose stack
+- **Delivery Hardening & SMTP Integration:** Configurable `DeliveryProvider` selection (`simulated` vs `smtp`), RFC 821/5322 real SMTP delivery via `SmtpDeliveryProvider`, delivery idempotency key tracking (`X-Delivery-Idempotency-Key`), retry send deduplication, local SMTP testing with GreenMail and MailHog, zero-leak credential logging, end-to-end integration tests (Outbox $\to$ Redis $\to$ Worker $\to$ SMTP $\to$ DB)
+

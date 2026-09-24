@@ -489,7 +489,7 @@ The platform operates strictly with **At-Least-Once Delivery Semantics**. The pl
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
 │ Layer 4: External Delivery Provider Abstraction (Channel Level - Hardening #4 & #11)   │
 │ - DeliveryProvider abstraction with stable, deterministic idempotency key (deliv-{id}) │
-│ - SimulatedDeliveryProvider deduplicates concurrent/repeated calls atomically.         │
+│ - SimulatedDeliveryProvider & SmtpDeliveryProvider deduplicate concurrent calls.       │
 │ - Retries reuse the exact same idempotency key without initiating duplicate sends.     │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -516,6 +516,7 @@ $$\text{Campaign is RUNNING} + \text{Valid non-zero audience} + \text{Delivery o
 | Failure Type | Description | Operational Handling | Classification |
 | :--- | :--- | :--- | :--- |
 | **Simulated Failure** | 10% delivery failure mandated by `FR-DEL-002`. | **Terminal Failure.** Row updated to `FAILED` in MySQL; acknowledged via `XACK`. Not retried. | `[DECIDED]` |
+| **SMTP Delivery Failure** | Network timeout, socket error, or server refusal in `SmtpDeliveryProvider`. | **Terminal/Error Handling.** Sanitized failure reason persisted in MySQL `campaign_delivery_records`; message acknowledged via `XACK`; zero credentials logged. | `[DECIDED]` |
 | **Transient Infrastructure** | Network glitch connecting to Redis or MySQL lock timeout. | **Retryable.** Task not acknowledged; remains in Redis PEL for reprocessing. | `[DECIDED]` |
 | **Poison Message** | Corrupted data or missing customer reference that repeatedly crashes worker. | Must be quarantined after exceeding maximum delivery attempts. Updated to `FAILED` with diagnostic reason; acknowledged via `XACK` to evict from PEL. | `[DEFERRED / REQUIRES TESTING]` |
 | **Persistent Statuses** | Relational delivery state in MySQL. | Strictly `PENDING`, `SENT`, and `FAILED`. Persistent `PROCESSING` status is strictly prohibited. | `[DECIDED]` |
