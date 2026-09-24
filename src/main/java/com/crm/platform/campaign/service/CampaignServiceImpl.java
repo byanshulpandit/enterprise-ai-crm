@@ -179,22 +179,25 @@ public class CampaignServiceImpl implements CampaignService {
             correlationId = java.util.UUID.randomUUID().toString();
         }
 
-        // Bounded audience materialization in batches of 500
-        int pageSize = 500;
-        int pageIndex = 0;
+        // Bounded audience materialization via keyset pagination on indexed Customer ID
+        int batchSize = 500;
+        Long lastSeenId = 0L;
         int totalMaterialized = 0;
 
         while (true) {
+            final Long currentLastId = lastSeenId;
+            Specification<Customer> batchSpec = spec.and((root, query, cb) -> cb.gt(root.get("id"), currentLastId));
             org.springframework.data.domain.Pageable pageable =
-                    org.springframework.data.domain.PageRequest.of(pageIndex, pageSize, org.springframework.data.domain.Sort.by("id").ascending());
-            Page<Customer> customerPage = customerRepository.findAll(spec, pageable);
+                    org.springframework.data.domain.PageRequest.of(0, batchSize, org.springframework.data.domain.Sort.by("id").ascending());
+            Page<Customer> customerPage = customerRepository.findAll(batchSpec, pageable);
 
             if (customerPage.isEmpty()) {
                 break;
             }
 
-            List<CampaignDeliveryRecord> records = new ArrayList<>(customerPage.getNumberOfElements());
-            for (Customer customer : customerPage.getContent()) {
+            List<Customer> customers = customerPage.getContent();
+            List<CampaignDeliveryRecord> records = new ArrayList<>(customers.size());
+            for (Customer customer : customers) {
                 String renderedMessage = MessageTemplateRenderer.render(campaign.getMessageTemplate(), customer);
                 records.add(new CampaignDeliveryRecord(campaign, customer, renderedMessage));
             }
@@ -213,11 +216,11 @@ public class CampaignServiceImpl implements CampaignService {
             outboxRepository.saveAll(outboxBatch);
 
             totalMaterialized += savedRecords.size();
+            lastSeenId = customers.get(customers.size() - 1).getId();
 
-            if (!customerPage.hasNext()) {
+            if (customers.size() < batchSize) {
                 break;
             }
-            pageIndex++;
         }
 
         // Trigger immediate outbox publication after MySQL commit

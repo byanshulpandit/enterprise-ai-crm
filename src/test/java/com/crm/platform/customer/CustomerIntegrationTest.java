@@ -566,4 +566,48 @@ public class CustomerIntegrationTest {
                 .andExpect(jsonPath("$.error.code", is("BAD_REQUEST")))
                 .andExpect(jsonPath("$.error.message", containsString("Allowed sort fields are")));
     }
+
+    // 22. Active customer duplicate email rejected with 409 Conflict
+    @Test
+    @DisplayName("Test 22: Creating customer with active email returns 409 Conflict")
+    void testActiveCustomerDuplicateEmail_Returns409() throws Exception {
+        Customer c1 = new Customer();
+        c1.setFirstName("Active");
+        c1.setLastName("User");
+        c1.setEmail("conflict.active@example.com");
+        customerRepository.save(c1);
+
+        String json = "{\"firstName\":\"New\",\"lastName\":\"User\",\"email\":\"conflict.active@example.com\"}";
+        mockMvc.perform(post("/api/v1/customers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.error.code", is("DUPLICATE_RESOURCE")))
+                .andExpect(jsonPath("$.error.message", containsString("already exists")));
+    }
+
+    // 23. Soft-deleted customer duplicate email rejected with 409 Conflict indicating soft-deleted
+    @Test
+    @DisplayName("Test 23: Creating customer with soft-deleted email returns 409 Conflict specifying soft-deleted")
+    void testSoftDeletedCustomerDuplicateEmail_Returns409() throws Exception {
+        Customer c1 = new Customer();
+        c1.setFirstName("Deleted");
+        c1.setLastName("User");
+        c1.setEmail("conflict.deleted@example.com");
+        Customer saved = customerRepository.save(c1);
+
+        // Soft-delete c1
+        mockMvc.perform(delete("/api/v1/customers/" + saved.getId()))
+                .andExpect(status().isNoContent());
+
+        String json = "{\"firstName\":\"New\",\"lastName\":\"User\",\"email\":\"conflict.deleted@example.com\"}";
+        mockMvc.perform(post("/api/v1/customers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.error.code", is("DUPLICATE_RESOURCE")))
+                .andExpect(jsonPath("$.error.message", containsString("already exists (soft-deleted)")));
+    }
 }

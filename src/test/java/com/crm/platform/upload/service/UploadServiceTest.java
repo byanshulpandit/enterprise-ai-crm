@@ -60,7 +60,8 @@ class UploadServiceTest {
                 userRepository,
                 new CsvCustomerParser(),
                 new XlsxCustomerParser(),
-                new ObjectMapper()
+                new ObjectMapper(),
+                new UploadBatchPersister(customerRepository)
         );
 
         testUser = new User("marketer1", "marketer1@crm.internal", "hashedpassword", RoleEnum.ROLE_MARKETER);

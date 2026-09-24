@@ -133,14 +133,18 @@ public class DeliveryStreamConsumer {
                 if (pm.getElapsedTimeSinceLastDelivery() != null &&
                         pm.getElapsedTimeSinceLastDelivery().toMillis() >= staleThresholdMs) {
                     
-                    List<?> rawRecords = redisTemplate.opsForStream().range(
+                    // Reclaim ownership to this active consumer via XCLAIM
+                    List<MapRecord<String, Object, Object>> claimedRecords = redisTemplate.opsForStream().claim(
                             streamKey,
-                            org.springframework.data.domain.Range.closed(pm.getIdAsString(), pm.getIdAsString())
+                            consumerGroup,
+                            consumerName,
+                            Duration.ofMillis(staleThresholdMs),
+                            pm.getId()
                     );
 
-                    if (rawRecords != null && !rawRecords.isEmpty()) {
-                        MapRecord<?, ?, ?> record = (MapRecord<?, ?, ?>) rawRecords.get(0);
-                        Map<?, ?> value = record.getValue();
+                    if (claimedRecords != null && !claimedRecords.isEmpty()) {
+                        MapRecord<String, Object, Object> record = claimedRecords.get(0);
+                        Map<Object, Object> value = record.getValue();
                         String campIdStr = value.get("campaignId") != null ? value.get("campaignId").toString() : null;
                         String custIdStr = value.get("customerId") != null ? value.get("customerId").toString() : null;
                         String correlationId = value.get("correlationId") != null ? value.get("correlationId").toString() : null;
@@ -156,14 +160,23 @@ public class DeliveryStreamConsumer {
                                 if (processed) {
                                     redisTemplate.opsForStream().acknowledge(streamKey, consumerGroup, pm.getId());
                                     recoveredCount++;
+                                } else {
+                                    log.warn("Reclaimed pending message id={} processing not finalized; leaving unacknowledged in PEL", pm.getId());
                                 }
                             } finally {
                                 org.slf4j.MDC.remove("requestId");
                             }
                         }
                     } else {
-                        // Message trimmed or absent; acknowledge to release pending entry
-                        redisTemplate.opsForStream().acknowledge(streamKey, consumerGroup, pm.getId());
+                        // Check if the message was trimmed or no longer exists in the stream
+                        List<?> existing = redisTemplate.opsForStream().range(
+                                streamKey,
+                                org.springframework.data.domain.Range.closed(pm.getIdAsString(), pm.getIdAsString())
+                        );
+                        if (existing == null || existing.isEmpty()) {
+                            // Message was pruned from stream; acknowledge to release ghost pending entry
+                            redisTemplate.opsForStream().acknowledge(streamKey, consumerGroup, pm.getId());
+                        }
                     }
                 }
             }

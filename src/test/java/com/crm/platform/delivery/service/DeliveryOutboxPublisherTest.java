@@ -44,6 +44,7 @@ class DeliveryOutboxPublisherTest {
                 outboxRepository,
                 redisTemplate,
                 "crm:campaign:deliveries:stream",
+                "crm:delivery:workers",
                 10000L
         );
     }
@@ -63,7 +64,6 @@ class DeliveryOutboxPublisherTest {
         assertThat(published).isEqualTo(1);
         verify(streamOperations).add(eq("crm:campaign:deliveries:stream"), anyMap());
         verify(outboxRepository).markPublished(eq(5L), eq(OutboxStatus.PENDING), eq(OutboxStatus.PUBLISHED), any(), any());
-        verify(streamOperations).trim(eq("crm:campaign:deliveries:stream"), eq(10000L), eq(true));
     }
 
     @Test
@@ -93,6 +93,35 @@ class DeliveryOutboxPublisherTest {
         int published = publisher.publishPendingEvents(50);
 
         assertThat(published).isEqualTo(0);
-        verify(redisTemplate, never()).opsForStream();
+    }
+
+    @Test
+    @DisplayName("safelyTrimStream trims using MINID when pending messages exist, protecting unacknowledged messages")
+    void testSafelyTrimStream_PendingMessagesExist_ProtectsPending() {
+        when(redisTemplate.opsForStream()).thenReturn((StreamOperations) streamOperations);
+        org.springframework.data.redis.connection.stream.PendingMessagesSummary summary =
+                mock(org.springframework.data.redis.connection.stream.PendingMessagesSummary.class);
+        when(summary.getTotalPendingMessages()).thenReturn(5L);
+        when(summary.minRecordId()).thenReturn(org.springframework.data.redis.connection.stream.RecordId.of("1700000001000-0"));
+        when(streamOperations.pending(eq("crm:campaign:deliveries:stream"), eq("crm:delivery:workers"))).thenReturn(summary);
+
+        publisher.safelyTrimStream();
+
+        verify(redisTemplate).execute(any(org.springframework.data.redis.core.RedisCallback.class));
+        verify(streamOperations, never()).trim(anyString(), anyLong(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("safelyTrimStream trims to maxStreamLength when zero pending messages exist")
+    void testSafelyTrimStream_ZeroPending_TrimsToMaxLength() {
+        when(redisTemplate.opsForStream()).thenReturn((StreamOperations) streamOperations);
+        org.springframework.data.redis.connection.stream.PendingMessagesSummary summary =
+                mock(org.springframework.data.redis.connection.stream.PendingMessagesSummary.class);
+        when(summary.getTotalPendingMessages()).thenReturn(0L);
+        when(streamOperations.pending(eq("crm:campaign:deliveries:stream"), eq("crm:delivery:workers"))).thenReturn(summary);
+
+        publisher.safelyTrimStream();
+
+        verify(streamOperations).trim(eq("crm:campaign:deliveries:stream"), eq(10000L), eq(true));
     }
 }

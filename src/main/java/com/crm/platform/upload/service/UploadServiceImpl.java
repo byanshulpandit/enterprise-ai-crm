@@ -51,6 +51,7 @@ public class UploadServiceImpl implements UploadService {
     private final CsvCustomerParser csvCustomerParser;
     private final XlsxCustomerParser xlsxCustomerParser;
     private final ObjectMapper objectMapper;
+    private final UploadBatchPersister uploadBatchPersister;
 
     @Value("${crm.upload.max-response-errors:100}")
     private int maxResponseErrors = 100;
@@ -60,13 +61,15 @@ public class UploadServiceImpl implements UploadService {
                              UserRepository userRepository,
                              CsvCustomerParser csvCustomerParser,
                              XlsxCustomerParser xlsxCustomerParser,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             UploadBatchPersister uploadBatchPersister) {
         this.customerRepository = customerRepository;
         this.uploadHistoryRepository = uploadHistoryRepository;
         this.userRepository = userRepository;
         this.csvCustomerParser = csvCustomerParser;
         this.xlsxCustomerParser = xlsxCustomerParser;
         this.objectMapper = objectMapper;
+        this.uploadBatchPersister = uploadBatchPersister;
     }
 
     @Override
@@ -245,7 +248,6 @@ public class UploadServiceImpl implements UploadService {
         return null;
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int persistBatchWithFallback(List<ParsedRow> batch, List<UploadErrorDetail> allErrors) {
         List<Customer> customersToSave = new ArrayList<>(batch.size());
         for (ParsedRow row : batch) {
@@ -253,16 +255,17 @@ public class UploadServiceImpl implements UploadService {
         }
 
         try {
-            customerRepository.saveAll(customersToSave);
-            customerRepository.flush();
+            uploadBatchPersister.persistBatch(customersToSave);
             return customersToSave.size();
         } catch (Exception batchEx) {
             log.warn("Batch save failed for {} records; invoking per-row fallback: {}",
                     batch.size(), batchEx.getMessage());
             int savedCount = 0;
-            for (ParsedRow row : batch) {
+            for (int i = 0; i < batch.size(); i++) {
+                ParsedRow row = batch.get(i);
+                Customer customer = customersToSave.get(i);
                 try {
-                    persistSingleCustomer(toCustomerEntity(row));
+                    uploadBatchPersister.persistSingle(customer);
                     savedCount++;
                 } catch (Exception rowEx) {
                     log.debug("Fallback per-row save failed for row #{}, email={}: {}",
@@ -276,11 +279,6 @@ public class UploadServiceImpl implements UploadService {
             }
             return savedCount;
         }
-    }
-
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void persistSingleCustomer(Customer customer) {
-        customerRepository.saveAndFlush(customer);
     }
 
     private Customer toCustomerEntity(ParsedRow row) {

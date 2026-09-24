@@ -32,6 +32,7 @@ public class AiController {
     }
 
     @PostMapping("/segments/generate-rules")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MARKETER')")
     public ResponseEntity<ApiResponse<AiRuleGenerationResponse>> generateRules(
             @Valid @RequestBody AiRuleGenerationRequest request,
             Authentication authentication) {

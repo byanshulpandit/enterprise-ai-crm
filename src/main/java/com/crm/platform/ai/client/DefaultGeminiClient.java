@@ -136,7 +136,7 @@ public class DefaultGeminiClient implements GeminiClient {
         }
     }
 
-    private String extractJsonFromGeminiResponse(String responseBody) {
+    String extractJsonFromGeminiResponse(String responseBody) {
         try {
             JsonNode root = objectMapper.readTree(responseBody);
             String text = root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
@@ -151,12 +151,18 @@ public class DefaultGeminiClient implements GeminiClient {
         }
     }
 
-    private String extractTextFromGeminiResponse(String responseBody) {
+    String extractTextFromGeminiResponse(String responseBody) {
         try {
             JsonNode root = objectMapper.readTree(responseBody);
-            return root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText().trim();
+            JsonNode textNode = root.path("candidates").path(0).path("content").path("parts").path(0).path("text");
+            if (textNode.isMissingNode() || textNode.asText().isBlank()) {
+                throw new ServiceUnavailableException("Gemini response did not contain valid summary text content");
+            }
+            return textNode.asText().trim();
+        } catch (ServiceUnavailableException e) {
+            throw e;
         } catch (Exception e) {
-            return "Campaign executed successfully across the targeted audience with positive delivery metrics.";
+            throw new ServiceUnavailableException("Failed to extract campaign summary from Gemini response", e);
         }
     }
 
@@ -203,10 +209,5 @@ public class DefaultGeminiClient implements GeminiClient {
         } catch (Exception e) {
             throw new UnprocessableEntityException("Could not serialize generated rule tree");
         }
-    }
-
-    private String generateDeterministicCampaignSummary(String metricsDesc) {
-        return "Executive Campaign Performance Summary: " + metricsDesc +
-                ". Message dispatch demonstrated high delivery reliability with minimal transient failures.";
     }
 }

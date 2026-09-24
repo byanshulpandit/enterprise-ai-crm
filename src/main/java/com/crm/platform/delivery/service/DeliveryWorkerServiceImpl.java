@@ -66,15 +66,17 @@ public class DeliveryWorkerServiceImpl implements DeliveryWorkerService {
             );
 
             com.crm.platform.delivery.provider.DeliveryResult result = deliveryProvider.send(request);
-            DeliveryStatus newStatus = result.isSuccess() ? DeliveryStatus.SENT : DeliveryStatus.FAILED;
-            String failureReason = result.isSuccess() ? null : result.getFailureReason();
+            boolean success = (result != null && result.isSuccess());
+            DeliveryStatus newStatus = success ? DeliveryStatus.SENT : DeliveryStatus.FAILED;
+            String failureReason = success ? null : (result != null ? result.getFailureReason() : "Delivery provider returned null result");
+            Instant processedAt = (result != null && result.getProcessedAt() != null) ? result.getProcessedAt() : Instant.now();
 
             int rowsUpdated = deliveryRecordRepository.updateStatusIfPending(
                     campaignId,
                     customerId,
                     newStatus,
                     failureReason,
-                    result.getProcessedAt() != null ? result.getProcessedAt() : Instant.now()
+                    processedAt
             );
 
             if (rowsUpdated > 0) {

@@ -275,7 +275,7 @@ public class CampaignServiceTest {
         when(campaignRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(campaign));
         when(segmentService.compileSegmentRules(testSegment.getId())).thenReturn(dummySpec);
         when(customerRepository.count(dummySpec)).thenReturn(2L);
-        when(customerRepository.findAll(org.mockito.ArgumentMatchers.eq(dummySpec), any(org.springframework.data.domain.Pageable.class)))
+        when(customerRepository.findAll(any(org.springframework.data.jpa.domain.Specification.class), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(c1, c2)));
         when(campaignRepository.save(any(Campaign.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(deliveryRecordRepository.saveAll(any())).thenAnswer(invocation -> {

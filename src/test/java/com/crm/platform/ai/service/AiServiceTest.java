@@ -152,4 +152,26 @@ class AiServiceTest {
         assertThat(campaign.getAiSummary()).contains("95% delivery rate");
         verify(campaignRepository).save(campaign);
     }
+
+    @Test
+    @DisplayName("Should propagate ServiceUnavailableException and never persist when Gemini client fails")
+    void testGenerateCampaignAiSummary_GeminiFailure_PropagatesAndNoSave() {
+        Campaign campaign = new Campaign();
+        campaign.setId(11L);
+        campaign.setName("Failed AI Summary Campaign");
+        campaign.setStatus(CampaignStatus.COMPLETED);
+
+        when(campaignRepository.findById(11L)).thenReturn(Optional.of(campaign));
+        when(deliveryRecordRepository.countByCampaignIdAndStatus(11L, DeliveryStatus.PENDING)).thenReturn(0L);
+        when(deliveryRecordRepository.countByCampaignIdAndStatus(11L, DeliveryStatus.SENT)).thenReturn(10L);
+        when(deliveryRecordRepository.countByCampaignIdAndStatus(11L, DeliveryStatus.FAILED)).thenReturn(0L);
+        when(geminiClient.generateCampaignSummary(anyString()))
+                .thenThrow(new com.crm.platform.common.exception.ServiceUnavailableException("Gemini API connection timed out"));
+
+        assertThatThrownBy(() -> aiService.generateCampaignAiSummary(11L))
+                .isInstanceOf(com.crm.platform.common.exception.ServiceUnavailableException.class)
+                .hasMessageContaining("Gemini API connection timed out");
+
+        verify(campaignRepository, never()).save(any());
+    }
 }

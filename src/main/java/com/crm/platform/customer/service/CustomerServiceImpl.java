@@ -45,8 +45,13 @@ public class CustomerServiceImpl implements CustomerService {
         String email = requestDto.getEmail().trim().toLowerCase();
 
         // Enforce email uniqueness at application layer before DB constraint check
-        if (customerRepository.existsByEmail(email)) {
-            throw new DuplicateResourceException("A customer with email '" + email + "' already exists.");
+        Optional<Customer> existingCustomer = customerRepository.findByEmail(email);
+        if (existingCustomer.isPresent()) {
+            if (existingCustomer.get().getDeletedAt() != null) {
+                throw new DuplicateResourceException("Customer with email already exists (soft-deleted): " + email);
+            } else {
+                throw new DuplicateResourceException("A customer with email '" + email + "' already exists.");
+            }
         }
 
         Customer customer = customerMapper.toEntity(requestDto);
@@ -72,7 +77,11 @@ public class CustomerServiceImpl implements CustomerService {
             String newEmail = patchDto.getEmail().trim().toLowerCase();
             Optional<Customer> existingWithEmail = customerRepository.findByEmail(newEmail);
             if (existingWithEmail.isPresent() && !existingWithEmail.get().getId().equals(id)) {
-                throw new DuplicateResourceException("A customer with email '" + newEmail + "' already exists.");
+                if (existingWithEmail.get().getDeletedAt() != null) {
+                    throw new DuplicateResourceException("Customer with email already exists (soft-deleted): " + newEmail);
+                } else {
+                    throw new DuplicateResourceException("A customer with email '" + newEmail + "' already exists.");
+                }
             }
         }
 

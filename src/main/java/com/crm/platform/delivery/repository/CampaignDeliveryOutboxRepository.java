@@ -17,6 +17,7 @@ public interface CampaignDeliveryOutboxRepository extends JpaRepository<Campaign
 
     List<CampaignDeliveryOutbox> findByStatusOrderByCreatedAtAsc(OutboxStatus status, Pageable pageable);
 
+    @org.springframework.transaction.annotation.Transactional
     @Modifying
     @Query("UPDATE CampaignDeliveryOutbox o SET o.status = :newStatus, o.publishedAt = :publishedAt, o.updatedAt = :now WHERE o.id = :id AND o.status = :expectedStatus")
     int markPublished(
@@ -27,6 +28,7 @@ public interface CampaignDeliveryOutboxRepository extends JpaRepository<Campaign
             @Param("now") Instant now
     );
 
+    @org.springframework.transaction.annotation.Transactional
     @Modifying
     @Query("UPDATE CampaignDeliveryOutbox o SET o.retryCount = o.retryCount + 1, o.lastError = :lastError, o.updatedAt = :now WHERE o.id = :id")
     int recordFailure(

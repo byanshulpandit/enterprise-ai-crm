@@ -52,7 +52,8 @@ class UploadHardeningTest {
                 userRepository,
                 new CsvCustomerParser(),
                 new XlsxCustomerParser(),
-                new ObjectMapper()
+                new ObjectMapper(),
+                new UploadBatchPersister(customerRepository)
         );
 
         testUser = new User("admin", "admin@crm.internal", "hashedpassword", RoleEnum.ROLE_ADMIN);

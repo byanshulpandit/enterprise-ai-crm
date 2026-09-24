@@ -28,14 +28,18 @@ public class DeliveryOutboxPublisher {
     private final String streamKey;
     private final long maxStreamLength;
 
+    private final String consumerGroup;
+
     public DeliveryOutboxPublisher(
             CampaignDeliveryOutboxRepository outboxRepository,
             StringRedisTemplate redisTemplate,
             @Value("${crm.async.stream-key:crm:campaign:deliveries:stream}") String streamKey,
+            @Value("${crm.async.consumer-group:crm:delivery:workers}") String consumerGroup,
             @Value("${crm.async.max-stream-length:10000}") long maxStreamLength) {
         this.outboxRepository = outboxRepository;
         this.redisTemplate = redisTemplate;
         this.streamKey = streamKey;
+        this.consumerGroup = consumerGroup;
         this.maxStreamLength = maxStreamLength;
     }
 
@@ -64,6 +68,7 @@ public class DeliveryOutboxPublisher {
         );
 
         if (pending.isEmpty()) {
+            safelyTrimStream();
             return 0;
         }
 
@@ -75,16 +80,53 @@ public class DeliveryOutboxPublisher {
             }
         }
 
-        // Apply stream retention trimming to prevent unbounded growth
+        safelyTrimStream();
+        return publishedCount;
+    }
+
+    /**
+     * Safely trims the Redis Stream to enforce bounded retention without ever dropping
+     * messages that are still pending/unacknowledged in the consumer group PEL.
+     */
+    public void safelyTrimStream() {
         try {
-            if (maxStreamLength > 0) {
+            if (maxStreamLength <= 0) {
+                return;
+            }
+
+            // Check unacknowledged pending messages in the consumer group
+            org.springframework.data.redis.connection.stream.PendingMessagesSummary summary = null;
+            try {
+                summary = redisTemplate.opsForStream().pending(streamKey, consumerGroup);
+            } catch (Exception e) {
+                log.debug("Could not inspect stream pending summary: {}", e.getMessage());
+            }
+
+            if (summary != null && summary.getTotalPendingMessages() > 0) {
+                org.springframework.data.redis.connection.stream.RecordId minPendingId = summary.minRecordId();
+                if (minPendingId != null) {
+                    // Safe Min-ID trimming: discard only acknowledged messages strictly older than the oldest pending entry
+                    redisTemplate.execute((org.springframework.data.redis.core.RedisCallback<Long>) connection -> {
+                        byte[] keyBytes = redisTemplate.getStringSerializer().serialize(streamKey);
+                        byte[] minIdBytes = redisTemplate.getStringSerializer().serialize(minPendingId.getValue());
+                        return (Long) connection.execute(
+                                "XTRIM",
+                                keyBytes,
+                                "MINID".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                                "~".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                                minIdBytes
+                        );
+                    });
+                    log.debug("Safely trimmed stream {} using MINID ~ {} (preserving {} pending messages)",
+                            streamKey, minPendingId.getValue(), summary.getTotalPendingMessages());
+                }
+            } else {
+                // Zero pending entries: safe to trim acknowledged history to maxStreamLength
                 redisTemplate.opsForStream().trim(streamKey, maxStreamLength, true);
             }
         } catch (Exception e) {
-            log.debug("Stream trimming skipped: {}", e.getMessage());
+            log.debug("Safe stream trimming skipped: {}", e.getMessage());
         }
-
-        return publishedCount;
     }
 
     @Transactional
