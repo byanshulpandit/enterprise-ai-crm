@@ -50,6 +50,7 @@ public class UploadControllerTest {
     @org.junit.jupiter.api.AfterEach
     void tearDown() {
         uploadHistoryRepository.deleteAll();
+        customerRepository.deleteAll();
     }
 
     @Test
