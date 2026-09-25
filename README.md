@@ -164,25 +164,45 @@ Switch delivery providers via configuration or environment variable:
 
 ### 5.2 Docker & Docker Compose Deployment
 
-The platform provides a production-grade multi-stage Dockerfile and an orchestrated local stack via `docker-compose.yml` comprising:
-- **`app`:** Spring Boot 3.3.3 container (Java 21 LTS, non-root user)
-- **`mysql`:** MySQL 8.4 official container with healthcheck and automatic schema initialization
-- **`redis`:** Redis 7 container with append-only persistence and healthcheck
-- **`smtp`:** MailHog v1.0.1 local SMTP test sink (listening on port 1025; no exposed web UI)
+#### Prerequisites
+- **Docker Desktop** (or Docker Engine with Docker Compose v2+)
+- **WSL2** (`wsl.exe --install` on Windows 10/11) with Virtual Machine Platform enabled
+- Hardware virtualization (Intel VT-x / AMD-V) enabled in system BIOS/UEFI
 
+#### Orchestrated Stack Architecture
+The local stack defined in `docker-compose.yml` orchestrates 4 interconnected services on the isolated `crm-network` bridge:
+- **`app`:** Spring Boot 3.3.3 container (Eclipse Temurin Java 21 JRE Alpine, dedicated non-root user `crmapp:crmgroup`, port `8080:8080`)
+- **`mysql`:** MySQL 8.4 official container (InnoDB, auto-initialized from `src/main/resources/schema.sql`, internal Docker network only to eliminate host port 3306 conflicts, healthcheck via `mysqladmin ping`)
+- **`redis`:** Redis 7 Alpine container (AOF persistence enabled, internal Docker network only to eliminate host port 6379 conflicts, healthcheck via `redis-cli ping`)
+- **`smtp`:** MailHog v1.0.1 development SMTP test sink (listening on internal port 1025; Web UI bound strictly to `127.0.0.1:8025` for localhost email inspection)
+
+#### Lifecycle Commands
 ```bash
-# Validate Compose configuration
+# 1. Validate Compose specification and variable interpolation
 docker compose config
 
-# Build and start all 4 services
+# 2. Build image and launch complete stack in detached mode
 docker compose up --build -d
 
-# View application logs
+# 3. Check health and status of all services
+docker compose ps
+
+# 4. Stream application container logs
 docker compose logs -f app
 
-# Tear down stack
+# 5. Inspect individual service logs
+docker compose logs --tail=100 mysql
+docker compose logs --tail=100 redis
+docker compose logs --tail=100 smtp
+
+# 6. Graceful shutdown and volume teardown
+docker compose down
+# Or tear down with persistent volumes removed:
 docker compose down -v
 ```
+
+> **Note on Windows Host Virtualization:**
+> Running Linux container engines (`dockerd`/WSL2) on Windows requires Windows Subsystem for Linux (WSL2) and the `VirtualMachinePlatform` feature. If not yet initialized on the host machine, run `wsl.exe --install` from an elevated Administrator prompt (or run the downloaded Docker Desktop installer) to activate the WSL2 Linux kernel.
 
 ---
 
