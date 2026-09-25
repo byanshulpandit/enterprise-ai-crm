@@ -18,9 +18,6 @@ import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.Objects;
 
-/**
- * Represents a customer segment with rule tree definition.
- */
 @Entity
 @Table(name = "segments")
 public class Segment {

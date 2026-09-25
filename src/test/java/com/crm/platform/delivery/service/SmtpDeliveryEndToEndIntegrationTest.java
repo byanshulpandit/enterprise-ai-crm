@@ -38,9 +38,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * End-to-end integration test for SMTP email delivery using embedded GreenMail.
- */
 @SpringBootTest
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public class SmtpDeliveryEndToEndIntegrationTest {
