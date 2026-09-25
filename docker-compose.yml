@@ -68,7 +68,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: rootpassword
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      CRM_DELIVERY_PROVIDER: ${CRM_DELIVERY_PROVIDER:-simulated}
+      CRM_DELIVERY_PROVIDER: ${CRM_DELIVERY_PROVIDER:-smtp}
       SMTP_HOST: smtp
       SMTP_PORT: 1025
       SMTP_FROM: noreply@crm.internal
