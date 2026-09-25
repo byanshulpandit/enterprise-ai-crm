@@ -13,12 +13,14 @@ import java.util.Optional;
 public interface SegmentRepository extends JpaRepository<Segment, Long> {
 
     @Override
+    @org.springframework.lang.NonNull
     @EntityGraph(attributePaths = {"createdBy"})
-    Optional<Segment> findById(Long id);
+    Optional<Segment> findById(@org.springframework.lang.NonNull Long id);
 
     @Override
+    @org.springframework.lang.NonNull
     @EntityGraph(attributePaths = {"createdBy"})
-    Page<Segment> findAll(Pageable pageable);
+    Page<Segment> findAll(@org.springframework.lang.NonNull Pageable pageable);
 
     Optional<Segment> findByName(String name);
 

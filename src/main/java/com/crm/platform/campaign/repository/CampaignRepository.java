@@ -14,15 +14,17 @@ import java.util.Optional;
 public interface CampaignRepository extends JpaRepository<Campaign, Long> {
 
     @Override
+    @org.springframework.lang.NonNull
     @EntityGraph(attributePaths = {"segment", "createdBy"})
-    Optional<Campaign> findById(Long id);
+    Optional<Campaign> findById(@org.springframework.lang.NonNull Long id);
 
     @EntityGraph(attributePaths = {"segment", "createdBy"})
     Page<Campaign> findByStatus(CampaignStatus status, Pageable pageable);
 
     @Override
+    @org.springframework.lang.NonNull
     @EntityGraph(attributePaths = {"segment", "createdBy"})
-    Page<Campaign> findAll(Pageable pageable);
+    Page<Campaign> findAll(@org.springframework.lang.NonNull Pageable pageable);
 
     boolean existsBySegmentId(Long segmentId);
 

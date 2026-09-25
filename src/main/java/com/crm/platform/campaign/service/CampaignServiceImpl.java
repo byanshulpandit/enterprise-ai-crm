@@ -40,6 +40,7 @@ public class CampaignServiceImpl implements CampaignService {
     private final SegmentService segmentService;
     private final CustomerRepository customerRepository;
     private final CampaignDeliveryRecordRepository deliveryRecordRepository;
+    @SuppressWarnings("unused")
     private final DeliveryStreamProducer deliveryStreamProducer;
     private final com.crm.platform.delivery.repository.CampaignDeliveryOutboxRepository outboxRepository;
     private final com.crm.platform.delivery.service.DeliveryOutboxPublisher outboxPublisher;

@@ -1,6 +1,5 @@
 package com.crm.platform.delivery.service;
 
-import com.crm.platform.campaign.entity.Campaign;
 import com.crm.platform.campaign.entity.CampaignStatus;
 import com.crm.platform.campaign.repository.CampaignRepository;
 import com.crm.platform.delivery.entity.CampaignDeliveryRecord;
@@ -14,13 +13,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.Optional;
-import java.util.Random;
 
 @Service
 public class DeliveryWorkerServiceImpl implements DeliveryWorkerService {
 
     private static final Logger log = LoggerFactory.getLogger(DeliveryWorkerServiceImpl.class);
-    private static final Random RANDOM = new Random();
 
     private final CampaignDeliveryRecordRepository deliveryRecordRepository;
     private final CampaignRepository campaignRepository;

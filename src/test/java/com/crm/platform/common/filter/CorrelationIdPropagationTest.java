@@ -1,18 +1,11 @@
 package com.crm.platform.common.filter;
 
 import com.crm.platform.delivery.entity.CampaignDeliveryOutbox;
-import com.crm.platform.delivery.service.DeliveryStreamConsumer;
-import com.crm.platform.delivery.service.DeliveryWorkerService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
@@ -21,19 +14,8 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
 public class CorrelationIdPropagationTest {
-
-    @Mock
-    private StringRedisTemplate redisTemplate;
-
-    @Mock
-    private RedisConnectionFactory connectionFactory;
-
-    @Mock
-    private DeliveryWorkerService deliveryWorkerService;
 
     @Test
     @DisplayName("RequestIdFilter preserves supplied X-Request-Id, sets response header, and cleans up MDC")

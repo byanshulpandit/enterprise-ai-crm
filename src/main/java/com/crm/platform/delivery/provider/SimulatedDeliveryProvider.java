@@ -1,7 +1,5 @@
 package com.crm.platform.delivery.provider;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
@@ -10,8 +8,6 @@ import java.util.concurrent.ConcurrentMap;
 
 @Component
 public class SimulatedDeliveryProvider implements DeliveryProvider {
-
-    private static final Logger log = LoggerFactory.getLogger(SimulatedDeliveryProvider.class);
 
     private final ConcurrentMap<String, DeliveryResult> processedCache = new ConcurrentHashMap<>();
 
