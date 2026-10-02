@@ -167,7 +167,7 @@ The platform is structured following the **3-Tier Modular Monolith Architecture*
 
 ```mermaid
 graph TD
-    Client["Client / Frontend (Next.js / Vite SPA)"]
+    Client["Client / Frontend (Java-based Vaadin Flow Server-Side Web UI)"]
     
     subgraph Presentation ["Presentation & Security Tier"]
         ReqIdFilter["RequestIdFilter (MDC: X-Request-Id)"]
@@ -1938,9 +1938,9 @@ This table specifies every screen required in the frontend application, mapped d
 
 ---
 
-## 23. Frontend TypeScript Data Models
+## 23. Frontend Data Contracts & DTOs (Java / Vaadin Flow)
 
-The frontend application should define the following TypeScript interfaces matching backend DTOs:
+The Java-based Vaadin Flow frontend consumes backend REST DTOs directly or wraps them in typed view models:
 
 ```typescript
 // Authentication
