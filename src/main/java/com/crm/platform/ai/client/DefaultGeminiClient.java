@@ -33,8 +33,8 @@ public class DefaultGeminiClient implements GeminiClient {
     private final java.util.concurrent.atomic.AtomicBoolean lastGenerationFallback = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     public DefaultGeminiClient(
-            @Value("${gemini.api-key:${GEMINI_API_KEY:}}") String apiKey,
-            @Value("${gemini.model:gemini-1.5-flash}") String model,
+            @Value("${crm.ai.gemini.api-key:${gemini.api-key:${GEMINI_API_KEY:}}}") String apiKey,
+            @Value("${crm.ai.gemini.model:${gemini.model:${GEMINI_MODEL:gemini-1.5-flash}}}") String model,
             @Value("${crm.ai.gemini.connect-timeout-ms:3000}") long connectTimeoutMs,
             @Value("${crm.ai.gemini.read-timeout-ms:7000}") long readTimeoutMs,
             ObjectMapper objectMapper) {

@@ -1,0 +1,80 @@
+# Production Profile Configuration (spring.profiles.active=prod)
+# Strictly adheres to enterprise security standards:
+# - Enforces TLS for remote MySQL connection (sslMode=REQUIRED, allowPublicKeyRetrieval=false)
+# - No default root username, no default empty password; fails fast if secrets/credentials are absent
+# - spring.sql.init.mode=never in production
+# - Default delivery provider is smtp (overridable via CRM_DELIVERY_PROVIDER)
+# - Fails fast if mandatory infrastructure hosts (DB, Redis, SMTP) or JWT secret are missing
+
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  sql:
+    init:
+      mode: never
+  datasource:
+    # Remote DB connection requires TLS and forbids public key retrieval
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://${DB_HOST}:${DB_PORT:3306}/${DB_NAME:crm_db}?sslMode=REQUIRED&allowPublicKeyRetrieval=false&serverTimezone=UTC}
+    username: ${SPRING_DATASOURCE_USERNAME:${DB_USERNAME}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${DB_PASSWORD}}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: CrmHikariProdPool
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: false
+    show-sql: false
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:${REDIS_HOST}}
+      port: ${SPRING_DATA_REDIS_PORT:${REDIS_PORT:6379}}
+      password: ${SPRING_DATA_REDIS_PASSWORD:${REDIS_PASSWORD:}}
+      timeout: 5000ms
+
+security:
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: ${JWT_ISSUER:cs-crm-2026}
+    expiration-ms: ${JWT_EXPIRATION_MS:3600000}
+  bootstrap:
+    admin:
+      username: ${BOOTSTRAP_ADMIN_USERNAME:}
+      email: ${BOOTSTRAP_ADMIN_EMAIL:}
+      password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+
+crm:
+  delivery:
+    provider: ${CRM_DELIVERY_PROVIDER:smtp}
+  ai:
+    gemini:
+      api-key: ${GEMINI_API_KEY:}
+      model: ${GEMINI_MODEL:gemini-1.5-flash}
+      connect-timeout-ms: ${GEMINI_CONNECT_TIMEOUT_MS:3000}
+      read-timeout-ms: ${GEMINI_READ_TIMEOUT_MS:7000}
+
+smtp:
+  host: ${SPRING_MAIL_HOST:${SMTP_HOST}}
+  port: ${SPRING_MAIL_PORT:${SMTP_PORT:587}}
+  username: ${SPRING_MAIL_USERNAME:${SMTP_USERNAME:}}
+  password: ${SPRING_MAIL_PASSWORD:${SMTP_PASSWORD:}}
+  from: ${SMTP_FROM:noreply@crm.internal}
+  timeout-ms: ${SMTP_TIMEOUT_MS:5000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when_authorized

@@ -26,22 +26,21 @@ public final class FrontendSecurityContext {
             return userSession;
         }
         UserSession threadSession = fallbackSession.get();
-        if (threadSession == null) {
-            threadSession = new UserSession();
-            fallbackSession.set(threadSession);
-        }
-        return threadSession;
+        return threadSession != null ? threadSession : new UserSession();
     }
 
     public static void setCurrentSession(UserSession userSession) {
         VaadinSession session = VaadinSession.getCurrent();
         if (session != null) {
             session.setAttribute(UserSession.class, userSession);
-        }
-        if (userSession != null) {
-            fallbackSession.set(userSession);
-        } else {
+            // Ensure thread-local fallback is cleaned up to prevent worker thread contamination
             fallbackSession.remove();
+        } else {
+            if (userSession != null) {
+                fallbackSession.set(userSession);
+            } else {
+                fallbackSession.remove();
+            }
         }
     }
 
@@ -73,6 +72,58 @@ public final class FrontendSecurityContext {
         return getCurrentSession().isAdmin();
     }
 
+    public static void clearThreadSession() {
+        UserSession threadSession = fallbackSession.get();
+        if (threadSession != null) {
+            threadSession.clear();
+        }
+        fallbackSession.remove();
+    }
+
+    /**
+     * Safely executes an action with the specified UserSession bound to the current thread,
+     * restoring or removing the thread-local state in a guaranteed finally block.
+     */
+    public static void runWithSession(UserSession session, Runnable action) {
+        UserSession previous = fallbackSession.get();
+        try {
+            if (session != null) {
+                fallbackSession.set(session);
+            } else {
+                fallbackSession.remove();
+            }
+            action.run();
+        } finally {
+            if (previous != null) {
+                fallbackSession.set(previous);
+            } else {
+                fallbackSession.remove();
+            }
+        }
+    }
+
+    /**
+     * Safely executes a supplier with the specified UserSession bound to the current thread,
+     * restoring or removing the thread-local state in a guaranteed finally block.
+     */
+    public static <T> T supplyWithSession(UserSession session, java.util.function.Supplier<T> supplier) {
+        UserSession previous = fallbackSession.get();
+        try {
+            if (session != null) {
+                fallbackSession.set(session);
+            } else {
+                fallbackSession.remove();
+            }
+            return supplier.get();
+        } finally {
+            if (previous != null) {
+                fallbackSession.set(previous);
+            } else {
+                fallbackSession.remove();
+            }
+        }
+    }
+
     public static void logout() {
         VaadinSession session = VaadinSession.getCurrent();
         if (session != null) {
@@ -81,12 +132,11 @@ public final class FrontendSecurityContext {
                 userSession.clear();
             }
             session.setAttribute(UserSession.class, null);
-            session.close();
+            try {
+                session.close();
+            } catch (Exception ignored) {
+            }
         }
-        UserSession threadSession = fallbackSession.get();
-        if (threadSession != null) {
-            threadSession.clear();
-        }
-        fallbackSession.remove();
+        clearThreadSession();
     }
 }
