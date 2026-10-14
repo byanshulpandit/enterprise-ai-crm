@@ -12,8 +12,9 @@ WORKDIR /build
 COPY pom.xml .
 RUN mvn dependency:go-offline -B
 
-# Copy source code and build production jar (skipping tests for container image build)
+# Copy source code and frontend theme assets, then build production jar
 COPY src ./src
+COPY frontend ./frontend
 RUN mvn clean package -DskipTests -B
 
 # Stage 2: Minimal Production Runtime
