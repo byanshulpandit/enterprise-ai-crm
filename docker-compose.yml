@@ -19,6 +19,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    ports:
+      - "127.0.0.1:3306:3306"
     networks:
       - crm-network
 
@@ -34,6 +36,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    ports:
+      - "127.0.0.1:6379:6379"
     networks:
       - crm-network
 
@@ -78,6 +82,7 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: admin@crm.internal
       BOOTSTRAP_ADMIN_PASSWORD: AdminPassword123!
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      VAADIN_PRODUCTIONMODE: "true"
     networks:
       - crm-network
 

@@ -36,3 +36,7 @@ build/
 Thumbs.db
 *.log
 dump.rdb
+
+### Vaadin ###
+frontend/generated/
+node_modules/

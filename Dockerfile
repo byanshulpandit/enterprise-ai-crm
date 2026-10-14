@@ -15,7 +15,7 @@ RUN mvn dependency:go-offline -B
 # Copy source code and frontend theme assets, then build production jar
 COPY src ./src
 COPY frontend ./frontend
-RUN mvn clean package -DskipTests -B
+RUN mvn clean package -Pproduction -DskipTests -B
 
 # Stage 2: Minimal Production Runtime
 FROM eclipse-temurin:21-jre-alpine
