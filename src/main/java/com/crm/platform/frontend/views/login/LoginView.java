@@ -59,6 +59,16 @@ public class LoginView extends VerticalLayout {
                 .set("color", "var(--crm-text-secondary)")
                 .set("margin", "0 0 12px 0");
 
+        Div hintBox = new Div();
+        hintBox.addClassName("crm-status-pill");
+        hintBox.addClassName("crm-status-info");
+        hintBox.setWidthFull();
+        hintBox.getStyle().set("margin-bottom", "14px").set("font-size", "12px");
+        Span hintDot = new Span();
+        hintDot.addClassName("crm-status-dot");
+        Span hintText = new Span("Default Admin: admin / AdminPassword123!");
+        hintBox.add(hintDot, hintText);
+
         errorBanner = new Div();
         errorBanner.addClassName("crm-status-pill");
         errorBanner.addClassName("crm-status-error");
@@ -68,11 +78,13 @@ public class LoginView extends VerticalLayout {
 
         TextField usernameField = new TextField("Username or Email");
         usernameField.setWidthFull();
+        usernameField.setValue("admin");
         usernameField.setPlaceholder("e.g. admin or marketer");
         usernameField.setRequired(true);
 
         PasswordField passwordField = new PasswordField("Password");
         passwordField.setWidthFull();
+        passwordField.setValue("AdminPassword123!");
         passwordField.setPlaceholder("Enter account password");
         passwordField.setRequired(true);
 
@@ -101,7 +113,7 @@ public class LoginView extends VerticalLayout {
         loginButton.getStyle().set("margin-top", "16px").set("height", "40px");
         loginButton.addClickShortcut(Key.ENTER);
 
-        cardContent.add(brandTitle, subtitle, errorBanner, usernameField, passwordField, loginButton);
+        cardContent.add(brandTitle, subtitle, hintBox, errorBanner, usernameField, passwordField, loginButton);
         loginCard.add(cardContent);
 
         add(loginCard);
