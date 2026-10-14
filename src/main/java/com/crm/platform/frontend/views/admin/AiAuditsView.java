@@ -22,7 +22,7 @@ import java.time.ZoneId;
  * SCR-15: AI Audit Log Inspector (ADMIN only) tracking prompts and synthesized rule trees.
  */
 @Route(value = "admin/ai-audits", layout = MainLayout.class)
-@RolesAllowed("ADMIN")
+@RolesAllowed({"ADMIN", "ROLE_ADMIN"})
 @PageTitle("AI Audit Logs | Enterprise AI-CRM")
 public class AiAuditsView extends VerticalLayout {
 

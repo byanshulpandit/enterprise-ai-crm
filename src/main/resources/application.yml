@@ -8,9 +8,9 @@ spring:
     init:
       mode: always
   datasource:
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:crm_db}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
-    username: ${DB_USERNAME:root}
-    password: ${DB_PASSWORD:}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:crm_db}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${SPRING_DATASOURCE_USERNAME:${DB_USERNAME:root}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${DB_PASSWORD:}}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       pool-name: CrmHikariPool
@@ -31,8 +31,9 @@ spring:
     show-sql: false
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+      host: ${SPRING_DATA_REDIS_HOST:${REDIS_HOST:localhost}}
+      port: ${SPRING_DATA_REDIS_PORT:${REDIS_PORT:6379}}
+      password: ${SPRING_DATA_REDIS_PASSWORD:${REDIS_PASSWORD:}}
       timeout: 5000ms
   servlet:
     multipart:
@@ -77,10 +78,10 @@ crm:
       read-timeout-ms: ${GEMINI_READ_TIMEOUT_MS:7000}
 
 smtp:
-  host: ${SMTP_HOST:localhost}
-  port: ${SMTP_PORT:1025}
-  username: ${SMTP_USERNAME:}
-  password: ${SMTP_PASSWORD:}
+  host: ${SPRING_MAIL_HOST:${SMTP_HOST:localhost}}
+  port: ${SPRING_MAIL_PORT:${SMTP_PORT:1025}}
+  username: ${SPRING_MAIL_USERNAME:${SMTP_USERNAME:}}
+  password: ${SPRING_MAIL_PASSWORD:${SMTP_PASSWORD:}}
   from: ${SMTP_FROM:noreply@crm.internal}
   timeout-ms: ${SMTP_TIMEOUT_MS:5000}
 

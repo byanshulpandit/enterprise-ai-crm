@@ -28,9 +28,10 @@ public class AuthApiService {
         if (response != null && response.getToken() != null) {
             RoleEnum role = RoleEnum.ROLE_MARKETER;
             if (response.getUser() != null && response.getUser().getRole() != null) {
-                try {
-                    role = RoleEnum.valueOf(response.getUser().getRole());
-                } catch (IllegalArgumentException ignored) {
+                String roleStr = response.getUser().getRole().trim().toUpperCase();
+                if ("ADMIN".equals(roleStr) || "ROLE_ADMIN".equals(roleStr)) {
+                    role = RoleEnum.ROLE_ADMIN;
+                } else {
                     role = RoleEnum.ROLE_MARKETER;
                 }
             }

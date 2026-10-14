@@ -120,4 +120,31 @@ class SegmentAstBuilderIntegrationTest {
         assertEquals(LogicalOperator.OR, subLogical.getOperator());
         assertEquals(2, subLogical.getConditions().size());
     }
+
+    @Test
+    @DisplayName("Should reject AST exceeding maximum permitted nesting depth of 10")
+    void shouldRejectAstExceedingMaxDepth() {
+        ObjectNode current = JsonNodeFactory.instance.objectNode();
+        current.put("operator", "AND");
+        ObjectNode root = current;
+
+        // Build 11 nested groups exceeding max depth 10
+        for (int i = 0; i < 11; i++) {
+            ArrayNode conditions = current.putArray("conditions");
+            ObjectNode nextGroup = JsonNodeFactory.instance.objectNode();
+            nextGroup.put("operator", "AND");
+            conditions.add(nextGroup);
+            current = nextGroup;
+        }
+
+        ArrayNode terminalConditions = current.putArray("conditions");
+        ObjectNode leaf = JsonNodeFactory.instance.objectNode();
+        leaf.put("field", "city");
+        leaf.put("op", "EQUALS");
+        leaf.put("value", "Delhi");
+        terminalConditions.add(leaf);
+
+        String json = root.toString();
+        assertThrows(com.crm.platform.common.exception.InvalidRequestException.class, () -> parser.parse(json));
+    }
 }
