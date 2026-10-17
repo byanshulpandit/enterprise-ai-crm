@@ -1,0 +1,16 @@
+target/
+*.class
+.git
+.gitignore
+.dockerignore
+crm-ui/
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!*.env.example
+.idea/
+.vscode/
+*.iml
+.planning/

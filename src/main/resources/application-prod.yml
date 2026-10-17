@@ -9,10 +9,6 @@
 server:
   port: ${SERVER_PORT:8080}
 
-vaadin:
-  productionMode: true
-
-
 spring:
   sql:
     init:

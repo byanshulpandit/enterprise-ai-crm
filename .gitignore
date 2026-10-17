@@ -37,6 +37,14 @@ Thumbs.db
 *.log
 dump.rdb
 
-### Vaadin ###
-frontend/generated/
-node_modules/
+### React Frontend ###
+crm-ui/node_modules/
+crm-ui/dist/
+crm-ui/.tmp/
+
+### Local Environment / Secrets ###
+.env
+.env.local
+.env.*.local
+*.secret
+

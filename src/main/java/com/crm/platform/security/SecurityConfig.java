@@ -40,24 +40,8 @@ public class SecurityConfig {
 
     @Bean(name = "securityFilterChain")
     @Primary
-    @Order(1)
-    public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .securityMatcher(new org.springframework.security.web.util.matcher.OrRequestMatcher(
-                        new org.springframework.security.web.util.matcher.AntPathRequestMatcher("/api/**"),
-                        new org.springframework.security.web.util.matcher.AntPathRequestMatcher("/swagger-ui/**"),
-                        new org.springframework.security.web.util.matcher.AntPathRequestMatcher("/v3/api-docs/**"),
-                        new org.springframework.security.web.util.matcher.AntPathRequestMatcher("/swagger-ui.html"),
-                        new org.springframework.security.web.util.matcher.AntPathRequestMatcher("/actuator/**"),
-                        request -> {
-                            String uri = request.getRequestURI();
-                            if (uri != null && uri.endsWith("/login")) {
-                                String accept = request.getHeader("Accept");
-                                return accept == null || !accept.contains("text/html");
-                            }
-                            return false;
-                        }
-                ))
                 .csrf(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
@@ -71,7 +55,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll()
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()
-                        .requestMatchers("/actuator/**").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/customers/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/customers/**").hasAnyRole("ADMIN", "MARKETER")
                         .requestMatchers("/api/v1/users/**").hasRole("ADMIN")
@@ -86,18 +70,6 @@ public class SecurityConfig {
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
-        return http.build();
-    }
-
-    @Bean
-    @Order(2)
-    public SecurityFilterChain vaadinSecurityFilterChain(HttpSecurity http) throws Exception {
-        http
-                .securityMatcher("/**")
-                .csrf(AbstractHttpConfigurer::disable)
-                .authorizeHttpRequests(auth -> auth
-                        .anyRequest().permitAll()
-                );
         return http.build();
     }
 }
