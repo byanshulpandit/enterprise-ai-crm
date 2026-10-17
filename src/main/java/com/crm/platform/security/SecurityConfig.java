@@ -2,6 +2,7 @@ package com.crm.platform.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
@@ -37,11 +38,26 @@ public class SecurityConfig {
         return RoleHierarchyImpl.fromHierarchy("ROLE_ADMIN > ROLE_MARKETER");
     }
 
-    @Bean
+    @Bean(name = "securityFilterChain")
+    @Primary
     @Order(1)
     public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {
         http
-                .securityMatcher("/api/**", "/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html", "/actuator/**")
+                .securityMatcher(new org.springframework.security.web.util.matcher.OrRequestMatcher(
+                        new org.springframework.security.web.util.matcher.AntPathRequestMatcher("/api/**"),
+                        new org.springframework.security.web.util.matcher.AntPathRequestMatcher("/swagger-ui/**"),
+                        new org.springframework.security.web.util.matcher.AntPathRequestMatcher("/v3/api-docs/**"),
+                        new org.springframework.security.web.util.matcher.AntPathRequestMatcher("/swagger-ui.html"),
+                        new org.springframework.security.web.util.matcher.AntPathRequestMatcher("/actuator/**"),
+                        request -> {
+                            String uri = request.getRequestURI();
+                            if (uri != null && uri.endsWith("/login")) {
+                                String accept = request.getHeader("Accept");
+                                return accept == null || !accept.contains("text/html");
+                            }
+                            return false;
+                        }
+                ))
                 .csrf(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)

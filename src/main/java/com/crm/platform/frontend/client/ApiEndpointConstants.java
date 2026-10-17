@@ -26,7 +26,7 @@ public final class ApiEndpointConstants {
     public static final String CAMPAIGN_BY_ID = "/api/v1/campaigns/{id}";
     public static final String CAMPAIGN_LAUNCH = "/api/v1/campaigns/{id}/launch";
     public static final String CAMPAIGN_DELIVERY_SUMMARY = "/api/v1/campaigns/{id}/delivery-summary";
-    public static final String DELIVERIES_BY_CAMPAIGN = "/api/v1/deliveries/campaigns/{id}";
+    public static final String DELIVERIES_BY_CAMPAIGN = "/api/v1/campaigns/{id}/deliveries";
 
     // Bulk Ingestion
     public static final String UPLOADS_BULK = "/api/v1/uploads/bulk";

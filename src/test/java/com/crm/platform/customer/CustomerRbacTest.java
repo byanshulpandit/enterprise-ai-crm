@@ -40,10 +40,22 @@ public class CustomerRbacTest {
     @Autowired
     private CustomerRepository customerRepository;
 
+    @Autowired(required = false)
+    private com.crm.platform.delivery.repository.CampaignDeliveryRecordRepository deliveryRecordRepository;
+
+    @Autowired(required = false)
+    private com.crm.platform.delivery.repository.CampaignDeliveryOutboxRepository outboxRepository;
+
+    @Autowired(required = false)
+    private com.crm.platform.campaign.repository.CampaignRepository campaignRepository;
+
     private Customer existingCustomer;
 
     @BeforeEach
     void setUp() {
+        if (outboxRepository != null) outboxRepository.deleteAll();
+        if (deliveryRecordRepository != null) deliveryRecordRepository.deleteAll();
+        if (campaignRepository != null) campaignRepository.deleteAll();
         customerRepository.deleteAll();
         Customer customer = new Customer();
         customer.setFirstName("Jane");

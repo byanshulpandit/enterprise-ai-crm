@@ -51,6 +51,12 @@ public class SegmentControllerTest {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired(required = false)
+    private com.crm.platform.delivery.repository.CampaignDeliveryRecordRepository deliveryRecordRepository;
+
+    @Autowired(required = false)
+    private com.crm.platform.delivery.repository.CampaignDeliveryOutboxRepository outboxRepository;
+
     @Autowired
     private com.crm.platform.customer.repository.CustomerRepository customerRepository;
 
@@ -60,6 +66,8 @@ public class SegmentControllerTest {
 
     @BeforeEach
     void setUp() {
+        if (outboxRepository != null) outboxRepository.deleteAll();
+        if (deliveryRecordRepository != null) deliveryRecordRepository.deleteAll();
         campaignRepository.deleteAll();
         segmentRepository.deleteAll();
         customerRepository.deleteAll();
@@ -77,6 +85,8 @@ public class SegmentControllerTest {
 
     @org.junit.jupiter.api.AfterEach
     void tearDown() {
+        if (outboxRepository != null) outboxRepository.deleteAll();
+        if (deliveryRecordRepository != null) deliveryRecordRepository.deleteAll();
         campaignRepository.deleteAll();
         segmentRepository.deleteAll();
         customerRepository.deleteAll();

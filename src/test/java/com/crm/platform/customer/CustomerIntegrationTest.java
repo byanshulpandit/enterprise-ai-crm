@@ -52,11 +52,23 @@ public class CustomerIntegrationTest {
     @Autowired
     private CustomerRepository customerRepository;
 
+    @Autowired(required = false)
+    private com.crm.platform.delivery.repository.CampaignDeliveryRecordRepository deliveryRecordRepository;
+
+    @Autowired(required = false)
+    private com.crm.platform.delivery.repository.CampaignDeliveryOutboxRepository outboxRepository;
+
+    @Autowired(required = false)
+    private com.crm.platform.campaign.repository.CampaignRepository campaignRepository;
+
     @Autowired
     private ApplicationContext applicationContext;
 
     @BeforeEach
     void setUp() {
+        if (outboxRepository != null) outboxRepository.deleteAll();
+        if (deliveryRecordRepository != null) deliveryRecordRepository.deleteAll();
+        if (campaignRepository != null) campaignRepository.deleteAll();
         customerRepository.deleteAll();
     }
 

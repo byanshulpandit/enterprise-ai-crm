@@ -26,6 +26,12 @@ public class SegmentRepositoryTest {
     @Autowired
     private CampaignRepository campaignRepository;
 
+    @Autowired(required = false)
+    private com.crm.platform.delivery.repository.CampaignDeliveryRecordRepository deliveryRecordRepository;
+
+    @Autowired(required = false)
+    private com.crm.platform.delivery.repository.CampaignDeliveryOutboxRepository outboxRepository;
+
     @Autowired
     private UserRepository userRepository;
 
@@ -33,6 +39,8 @@ public class SegmentRepositoryTest {
 
     @BeforeEach
     void setUp() {
+        if (outboxRepository != null) outboxRepository.deleteAll();
+        if (deliveryRecordRepository != null) deliveryRecordRepository.deleteAll();
         campaignRepository.deleteAll();
         segmentRepository.deleteAll();
         userRepository.deleteAll();
@@ -43,6 +51,8 @@ public class SegmentRepositoryTest {
 
     @org.junit.jupiter.api.AfterEach
     void tearDown() {
+        if (outboxRepository != null) outboxRepository.deleteAll();
+        if (deliveryRecordRepository != null) deliveryRecordRepository.deleteAll();
         campaignRepository.deleteAll();
         segmentRepository.deleteAll();
         userRepository.deleteAll();
