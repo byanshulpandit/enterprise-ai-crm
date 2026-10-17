@@ -78,9 +78,9 @@ services:
       SMTP_FROM: noreply@crm.internal
       SMTP_TIMEOUT_MS: 5000
       JWT_SECRET: crm-super-secret-key-minimum-32-bytes-long!
-      BOOTSTRAP_ADMIN_USERNAME: admin
-      BOOTSTRAP_ADMIN_EMAIL: admin@crm.internal
-      BOOTSTRAP_ADMIN_PASSWORD: AdminPassword123!
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@crm.internal}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       VAADIN_PRODUCTIONMODE: "true"
     networks:
